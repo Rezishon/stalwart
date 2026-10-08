@@ -1,0 +1,35 @@
+services:
+  stalwart-dev:
+    image: rust:bookworm
+    container_name: stalwart-dev
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-cache:/cargo-target
+      - stalwart-data:/var/lib/stalwart
+    ports:
+      - "8080:8080"   # HTTP Admin Web UI & APIs
+      - "443:443"     # HTTPS
+      - "2525:25"     # SMTP (mapped to 2525 to avoid host port 25 conflict)
+      - "465:465"     # SMTPS
+      - "587:587"     # Submission
+      - "143:143"     # IMAP
+      - "993:993"     # IMAPS
+      - "110:110"     # POP3
+      - "995:995"     # POP3S
+      - "4190:4190"   # ManageSieve
+    environment:
+      - CARGO_TARGET_DIR=/cargo-target
+      - STALWART_PATH=/var/lib/stalwart
+      - RUST_LOG=info
+      - STALWART_RECOVERY_ADMIN=admin:admin123456
+    stdin_open: true
+    tty: true
+
+volumes:
+  cargo-cache:
+  cargo-git:
+  target-cache:
+  stalwart-data:

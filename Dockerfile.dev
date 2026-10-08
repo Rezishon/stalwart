@@ -1,0 +1,21 @@
+# Use pinned slim Rust image to avoid re-pulling large :latest manifests
+FROM rust:1.85-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    clang \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+ENV CARGO_TARGET_DIR=/cargo-target
+ENV STALWART_PATH=/var/lib/stalwart
+
+EXPOSE 8080 443 25 587 465 143 993 995 4190
+
+CMD ["cargo", "run", "-p", "stalwart", "--", "-c", "/var/lib/stalwart/config.json"]
