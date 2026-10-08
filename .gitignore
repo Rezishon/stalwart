@@ -6,4 +6,6 @@ run.sh
 !.gitignore
 !.gitattributes
 !.github
+!.claude
 CLAUDE.md
+graphify-out/
