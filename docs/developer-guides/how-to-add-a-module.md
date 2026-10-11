@@ -242,13 +242,14 @@ For top-level paths (e.g. `/<module>` outside of `/api/`) or modular handlers:
 
 4. **Custom Frontend Pages & Integration Options**:
 
-Choose one of the 3 frontend strategies based on architectural needs:
+Choose one of the 4 frontend strategies based on architectural needs:
 
 | Strategy | When to Choose | Key Files / Extension Points |
 | :--- | :--- | :--- |
 | **Option A: Dynamic Admin View (Schema-Driven)** | Best for CRUD management forms, settings toggles, and standard admin controls inside `/admin`. Zero JavaScript coding required. | `resources/schema/schema.json` |
-| **Option B: Standalone Web Application (SPA Bundle)** | Best for dedicated complex interfaces (React, Vue, Svelte, or full dashboards) hosted under a custom prefix like `/<app-name>/`. | `crates/common/src/manager/application.rs`, `Application` struct, `.zip` bundle |
+| **Option B: Standalone Web Application (SPA Bundle)** | Best for dedicated complex interfaces (React, Vue, Svelte, or full dashboards) hosted under a custom prefix like `/<app-name>/`. Requires runtime zip extraction. | `crates/common/src/manager/application.rs`, `Application` struct, `.zip` bundle |
 | **Option C: Direct Server-Rendered HTML Route** | Best for lightweight static pages, landing screens, webhooks, or simple interactive widgets without client bundlers. | `crates/http/src/request.rs` |
+| **Option D: Embedded Zero-Overhead In-Binary SPA (`.rodata`)** | **Best for single-binary appliances (e.g. DeltaChat onboarding, captive portals).** Zero external files, zero zip extraction, zero disk I/O, instant memory-backed serving at `/`, `/app`, etc., with custom override support. | `crates/http/src/request.rs`, `rust-embed` / `include_dir!`, `resources/<app>-dist/` |
 
 ##### Option A: Schema-Driven View in Admin Dashboard (`/admin`)
 1. **WebUI Bundle (`resources/webui.zip`)**:
@@ -288,6 +289,15 @@ Choose one of the 3 frontend strategies based on architectural needs:
    }
    ```
 2. Access directly at `http://<host>:8080/<custom-page>`.
+
+##### Option D: Embedded Zero-Overhead In-Binary SPA (Compile-Time `.rodata` Serving)
+Used when deploying Stalwart as a self-contained single binary with zero external files, zero docker, and zero zip extraction (e.g. DeltaChat custom onboarding flow):
+1. **Frontend Build**: Develop the React/Vite/TypeScript frontend independently. Run `npm run build` to generate `dist/`.
+2. **Embedding**: Place the build artifacts in `resources/<app>-dist/`. Assets are embedded into the binary at compile time via `rust-embed` or `include_dir!` with pre-compressed gzip bytes.
+3. **HTTP Dispatch (`crates/http/src/request.rs`)**:
+   - Serve static assets directly from memory with `Cache-Control: public, max-age=31536000, immutable`.
+   - Route path fallbacks (`/`, `/app`, `/description`) to embedded `index.html` with `no-cache`.
+   - Provide an optional config toggle (e.g., in module settings like DeltaChat Relay Page) allowing administrators to override the embedded default with a custom disk path if desired.
 
 ---
 
