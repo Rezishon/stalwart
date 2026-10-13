@@ -19,7 +19,7 @@ use crate::{
 use common::{
     BuildServer, Inner, KV_ACME, Server,
     ipc::PushEvent,
-    manager::application::Resource,
+    manager::{application::Resource, embedded::serve_embedded_webui},
     network::{SessionData, SessionManager, SessionStream},
 };
 use dav::{DavMethod, request::DavRequestHandler};
@@ -721,25 +721,31 @@ impl ParseHttp for Server {
                     } else if let Some(url) = &self.core.network.http.redirect_root {
                         return Ok(HttpResponse::redirect(url.clone()));
                     }
-                } else if let Some(resource) = self
-                    .inner
-                    .data
-                    .applications
-                    .serve(
-                        external,
-                        req.uri()
-                            .path()
-                            .get(external.len() + 2..)
-                            .unwrap_or_default(),
-                    )
-                    .await?
-                {
-                    let response = resource.resource.into_http_response();
-                    return Ok(if !resource.no_cache {
-                        response.with_immutable_cache()
-                    } else {
-                        response.with_no_cache()
-                    });
+                } else {
+                    let rest = req
+                        .uri()
+                        .path()
+                        .get(external.len() + 2..)
+                        .unwrap_or_default();
+                    if matches!(external, "admin" | "account")
+                        && let Some(resource) = serve_embedded_webui(external, rest)
+                    {
+                        let response = resource.resource.into_http_response();
+                        return Ok(if !resource.no_cache {
+                            response.with_immutable_cache()
+                        } else {
+                            response.with_no_cache()
+                        });
+                    }
+                    if let Some(resource) = self.inner.data.applications.serve(external, rest).await?
+                    {
+                        let response = resource.resource.into_http_response();
+                        return Ok(if !resource.no_cache {
+                            response.with_immutable_cache()
+                        } else {
+                            response.with_no_cache()
+                        });
+                    }
                 }
 
                 if let Some(asset) = deltachat::dispatch_web_asset(req.uri().path()) {

@@ -173,23 +173,18 @@ ENTRYPOINT ["/usr/local/bin/stalwart"]
 CMD ["--config", "/etc/stalwart/config.json"]
 
 # *****************
-# Runtime image for musl targets
+# Runtime image for musl targets (scratch + CA bundle)
 # *****************
-FROM --platform=$TARGETPLATFORM alpine AS musl
-RUN apk add --update --no-cache ca-certificates curl tzdata libcap && \
-    rm -rf /var/cache/apk/* && \
-    addgroup -S -g 2000 stalwart && \
-    adduser -S -D -H -u 2000 -G stalwart -s /sbin/nologin stalwart && \
-    mkdir -p /etc/stalwart /var/lib/stalwart && \
-    chown stalwart:stalwart /etc/stalwart /var/lib/stalwart
+# rustls-platform-verifier reads /etc/ssl/certs. Scratch has no store.
+# ponytail: runs as root so :25/:443 bind without libcap. Drop to 65534 behind a terminator.
+FROM alpine AS certs
+RUN apk add --no-cache ca-certificates
+
+FROM scratch AS musl
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder --chmod=0755 /app/artifact/stalwart /usr/local/bin/stalwart
-RUN setcap 'cap_net_bind_service=+ep' /usr/local/bin/stalwart
-USER stalwart
-WORKDIR /var/lib/stalwart
 VOLUME ["/etc/stalwart", "/var/lib/stalwart"]
-EXPOSE	443 25 110 587 465 143 993 995 4190 8080
-ENV STALWART_HEALTHCHECK_URL=https://127.0.0.1:443/healthz/live
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -fsSk -H "X-Forwarded-For: 127.0.0.1" "$STALWART_HEALTHCHECK_URL" || curl -fsS -H "X-Forwarded-For: 127.0.0.1" http://127.0.0.1:8080/healthz/live || exit 1
+EXPOSE 443 25 110 587 465 143 993 995 4190 8080
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENTRYPOINT ["/usr/local/bin/stalwart"]
 CMD ["--config", "/etc/stalwart/config.json"]

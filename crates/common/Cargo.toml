@@ -94,6 +94,9 @@ dev_mode = []
 enterprise = []
 foundation = []
 
+[build-dependencies]
+zip = "8.6"
+
 [dev-dependencies]
 tokio = { version = "1.53", features = ["full"] }
 
