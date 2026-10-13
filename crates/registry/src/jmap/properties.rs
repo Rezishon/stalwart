@@ -40,6 +40,7 @@ impl jmap_tools::Element for RegistryValue {
                 | Property::DnsServerId
                 | Property::DirectoryId
                 | Property::DomainId
+                | Property::AllowedDomains
                 | Property::AccountId
                 | Property::DefaultDomainId
                 | Property::DefaultCertificateId

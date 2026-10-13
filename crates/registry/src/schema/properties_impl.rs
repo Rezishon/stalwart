@@ -129,6 +129,7 @@ impl EnumImpl for ObjectType {
             b"TracingStore" => ObjectType::TracingStore,
             b"WebDav" => ObjectType::WebDav,
             b"WebHook" => ObjectType::WebHook,
+            b"DeltaChat" => ObjectType::DeltaChat,
         }
     }
 
@@ -251,6 +252,7 @@ impl EnumImpl for ObjectType {
             ObjectType::TracingStore => "TracingStore",
             ObjectType::WebDav => "WebDav",
             ObjectType::WebHook => "WebHook",
+            ObjectType::DeltaChat => "DeltaChat",
         }
     }
 
@@ -377,11 +379,12 @@ impl EnumImpl for ObjectType {
             114 => Some(ObjectType::TracingStore),
             115 => Some(ObjectType::WebDav),
             116 => Some(ObjectType::WebHook),
+            117 => Some(ObjectType::DeltaChat),
             _ => None,
         }
     }
 
-    const COUNT: usize = 117;
+    const COUNT: usize = 118;
 }
 
 impl serde::Serialize for ObjectType {
@@ -1342,6 +1345,14 @@ impl EnumImpl for Property {
             b"zone" => Property::Zone,
             b"zoneIpV4" => Property::ZoneIpV4,
             b"zoneIpV6" => Property::ZoneIpV6,
+            b"registrationOpen" => Property::RegistrationOpen,
+            b"instantAccountsEnabled" => Property::InstantAccountsEnabled,
+            b"customAccountsEnabled" => Property::CustomAccountsEnabled,
+            b"frontendPath" => Property::FrontendPath,
+            b"allowedDomains" => Property::AllowedDomains,
+            b"altchaRequired" => Property::AltchaRequired,
+            b"altchaMaxNumber" => Property::AltchaMaxNumber,
+            b"altchaHmacSecret" => Property::AltchaHmacSecret,
         }
     }
 
@@ -2282,6 +2293,14 @@ impl EnumImpl for Property {
             Property::Zone => "zone",
             Property::ZoneIpV4 => "zoneIpV4",
             Property::ZoneIpV6 => "zoneIpV6",
+            Property::RegistrationOpen => "registrationOpen",
+            Property::InstantAccountsEnabled => "instantAccountsEnabled",
+            Property::CustomAccountsEnabled => "customAccountsEnabled",
+            Property::FrontendPath => "frontendPath",
+            Property::AllowedDomains => "allowedDomains",
+            Property::AltchaRequired => "altchaRequired",
+            Property::AltchaMaxNumber => "altchaMaxNumber",
+            Property::AltchaHmacSecret => "altchaHmacSecret",
         }
     }
 
@@ -3226,11 +3245,19 @@ impl EnumImpl for Property {
             749 => Some(Property::Zone),
             98 => Some(Property::ZoneIpV4),
             99 => Some(Property::ZoneIpV6),
+            935 => Some(Property::RegistrationOpen),
+            936 => Some(Property::InstantAccountsEnabled),
+            937 => Some(Property::CustomAccountsEnabled),
+            938 => Some(Property::FrontendPath),
+            939 => Some(Property::AllowedDomains),
+            946 => Some(Property::AltchaRequired),
+            947 => Some(Property::AltchaMaxNumber),
+            948 => Some(Property::AltchaHmacSecret),
             _ => None,
         }
     }
 
-    const COUNT: usize = 935;
+    const COUNT: usize = 949;
 }
 
 impl serde::Serialize for Property {
@@ -3372,6 +3399,7 @@ impl ObjectType {
             ObjectType::TracingStore => TracingStore::FLAGS,
             ObjectType::WebDav => WebDav::FLAGS,
             ObjectType::WebHook => WebHook::FLAGS,
+            ObjectType::DeltaChat => DeltaChat::FLAGS,
         }
     }
 
@@ -3749,6 +3777,7 @@ impl ObjectType {
             ObjectType::TracingStore => Permission::SysTracingStoreGet,
             ObjectType::WebDav => Permission::SysWebDavGet,
             ObjectType::WebHook => Permission::SysWebHookGet,
+            ObjectType::DeltaChat => Permission::SysSystemSettingsGet,
         }
     }
 
@@ -4404,6 +4433,11 @@ impl ObjectType {
                 Permission::SysWebHookUpdate,
                 Permission::SysWebHookDestroy,
             ],
+            ObjectType::DeltaChat => [
+                Permission::SysSystemSettingsUpdate,
+                Permission::SysSystemSettingsUpdate,
+                Permission::SysSystemSettingsUpdate,
+            ],
         }
     }
 }
@@ -4774,6 +4808,7 @@ impl ObjectInner {
             ObjectInner::TracingStore(obj) => obj.to_pickled_vec(),
             ObjectInner::WebDav(obj) => obj.to_pickled_vec(),
             ObjectInner::WebHook(obj) => obj.to_pickled_vec(),
+            ObjectInner::DeltaChat(obj) => obj.to_pickled_vec(),
         }
     }
 
@@ -4965,6 +5000,7 @@ impl ObjectInner {
             ObjectType::TracingStore => Pickle::unpickle(stream).map(ObjectInner::TracingStore),
             ObjectType::WebDav => Pickle::unpickle(stream).map(ObjectInner::WebDav),
             ObjectType::WebHook => Pickle::unpickle(stream).map(ObjectInner::WebHook),
+            ObjectType::DeltaChat => Pickle::unpickle(stream).map(ObjectInner::DeltaChat),
         }
     }
 
@@ -5254,6 +5290,7 @@ impl ObjectInner {
             }
             ObjectType::WebDav => WebDav::deserialize(deserializer).map(ObjectInner::WebDav),
             ObjectType::WebHook => WebHook::deserialize(deserializer).map(ObjectInner::WebHook),
+            ObjectType::DeltaChat => DeltaChat::deserialize(deserializer).map(ObjectInner::DeltaChat),
         }
     }
 
@@ -5411,6 +5448,7 @@ impl Object {
             ObjectInner::TracingStore(_) => TracingStore::FLAGS,
             ObjectInner::WebDav(_) => WebDav::FLAGS,
             ObjectInner::WebHook(_) => WebHook::FLAGS,
+            ObjectInner::DeltaChat(_) => DeltaChat::FLAGS,
         }
     }
 
@@ -5533,6 +5571,7 @@ impl Object {
             ObjectInner::TracingStore(_) => ObjectType::TracingStore,
             ObjectInner::WebDav(_) => ObjectType::WebDav,
             ObjectInner::WebHook(_) => ObjectType::WebHook,
+            ObjectInner::DeltaChat(_) => ObjectType::DeltaChat,
         }
     }
 
@@ -5684,6 +5723,7 @@ impl Object {
             ObjectInner::TracingStore(obj) => obj.validate(errors),
             ObjectInner::WebDav(obj) => obj.validate(errors),
             ObjectInner::WebHook(obj) => obj.validate(errors),
+            ObjectInner::DeltaChat(obj) => obj.validate(errors),
         }
     }
 
@@ -5806,6 +5846,7 @@ impl Object {
             ObjectInner::TracingStore(obj) => obj.index(i),
             ObjectInner::WebDav(obj) => obj.index(i),
             ObjectInner::WebHook(obj) => obj.index(i),
+            ObjectInner::DeltaChat(obj) => obj.index(i),
         }
     }
 
@@ -5932,6 +5973,7 @@ impl Object {
             ObjectInner::TracingStore(obj) => obj.patch(pointer, value),
             ObjectInner::WebDav(obj) => obj.patch(pointer, value),
             ObjectInner::WebHook(obj) => obj.patch(pointer, value),
+            ObjectInner::DeltaChat(obj) => obj.patch(pointer, value),
         }
     }
 }
@@ -6056,6 +6098,7 @@ impl IntoValue for Object {
             ObjectInner::TracingStore(obj) => obj.into_value(),
             ObjectInner::WebDav(obj) => obj.into_value(),
             ObjectInner::WebHook(obj) => obj.into_value(),
+            ObjectInner::DeltaChat(obj) => obj.into_value(),
         }
     }
 }
@@ -6188,6 +6231,7 @@ impl From<ObjectType> for ObjectInner {
             ObjectType::TracingStore => ObjectInner::TracingStore(Default::default()),
             ObjectType::WebDav => ObjectInner::WebDav(Default::default()),
             ObjectType::WebHook => ObjectInner::WebHook(Default::default()),
+            ObjectType::DeltaChat => ObjectInner::DeltaChat(Default::default()),
         }
     }
 }
@@ -7942,6 +7986,21 @@ impl From<Object> for WebHook {
     fn from(obj: Object) -> Self {
         match obj.inner {
             ObjectInner::WebHook(obj) => obj,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<DeltaChat> for ObjectInner {
+    fn from(value: DeltaChat) -> Self {
+        ObjectInner::DeltaChat(value)
+    }
+}
+
+impl From<Object> for DeltaChat {
+    fn from(obj: Object) -> Self {
+        match obj.inner {
+            ObjectInner::DeltaChat(obj) => obj,
             _ => unreachable!(),
         }
     }

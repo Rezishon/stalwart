@@ -257,6 +257,7 @@ impl RegistrySet for Server {
             | ObjectType::StoreLookup
             | ObjectType::Tracer
             | ObjectType::WebHook
+            | ObjectType::DeltaChat
             | ObjectType::PublicKey
             | ObjectType::DkimSignature
             | ObjectType::MaskedEmail

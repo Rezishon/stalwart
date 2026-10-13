@@ -127,6 +127,7 @@ pub enum ObjectInner {
     TracingStore(TracingStore),
     WebDav(WebDav),
     WebHook(WebHook),
+    DeltaChat(DeltaChat),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -249,6 +250,7 @@ pub enum ObjectType {
     TracingStore = 114,
     WebDav = 115,
     WebHook = 116,
+    DeltaChat = 117,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1189,4 +1191,12 @@ pub enum Property {
     Zone = 749,
     ZoneIpV4 = 98,
     ZoneIpV6 = 99,
+    RegistrationOpen = 935,
+    InstantAccountsEnabled = 936,
+    CustomAccountsEnabled = 937,
+    FrontendPath = 938,
+    AllowedDomains = 939,
+    AltchaRequired = 946,
+    AltchaMaxNumber = 947,
+    AltchaHmacSecret = 948,
 }
