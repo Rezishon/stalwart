@@ -298,6 +298,10 @@ jobs:
           compress_files() {
               local dir="$1"
               local archive_dir_name="${dir#artifact-}"
+              archive_dir_name="${archive_dir_name/-unknown-/-}"
+              archive_dir_name="${archive_dir_name/-linux-musleabihf/-linux}"
+              archive_dir_name="${archive_dir_name/-linux-musl/-linux}"
+              archive_dir_name="${archive_dir_name/-pc-windows-msvc/-windows}"
               cd "$dir"
               # Process each file in the directory
               for file in `ls`; do
