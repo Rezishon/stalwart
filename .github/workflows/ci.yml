@@ -280,7 +280,7 @@ jobs:
         if: (github.event_name == 'push' || inputs.Docker) && !contains(matrix.target, 'armv7')
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: digests-${{matrix.suffix == '' && 'gnu' || 'musl'}}-${{ matrix.target }}
+          name: digests-musl-${{ matrix.target }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
