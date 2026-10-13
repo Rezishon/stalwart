@@ -69,6 +69,49 @@ impl ManagementApi for Server {
         let path = req.uri().path().split('/').skip(2).collect::<Vec<_>>();
 
         match path.first().copied().unwrap_or_default() {
+            "v1" => {
+                self.is_http_anonymous_request_allowed(session.remote_ip)
+                    .await?;
+
+                let dc_obj = self
+                    .registry()
+                    .object::<registry::schema::structs::DeltaChat>(types::id::Id::singleton())
+                    .await
+                    .map_err(|err| trc::ResourceEvent::Error.reason(err))?;
+                let settings = match dc_obj {
+                    Some(dc) => deltachat::config::DeltaChatSettings::from(dc),
+                    None => deltachat::config::DeltaChatSettings::default(),
+                };
+
+                if !settings.enabled {
+                    return Err(trc::ResourceEvent::NotFound.into_err());
+                }
+
+                static ROUTER: std::sync::LazyLock<deltachat::router::DeltaChatRouter> =
+                    std::sync::LazyLock::new(deltachat::router::DeltaChatRouter::new);
+
+                let (status, resp_body, content_type) = match ROUTER
+                    .dispatch_api(
+                        &settings,
+                        &std::sync::Arc::new(self.clone()),
+                        req.method().as_str(),
+                        req.uri().path(),
+                        body.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(res) => res,
+                    Err(err) => (err.status_code(), err.to_json(), "application/json"),
+                };
+
+                let status_code = hyper::StatusCode::from_u16(status)
+                    .unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR);
+                Ok(HttpResponse::new(status_code)
+                    .with_content_type(content_type)
+                    .with_cors_unrestricted()
+                    .with_no_cache()
+                    .with_text_body(resp_body))
+            }
             "auth" if is_post => {
                 self.is_http_anonymous_request_allowed(session.remote_ip)
                     .await?;
@@ -119,14 +162,15 @@ impl ManagementApi for Server {
                     include_bytes!("../../../../resources/schema/schema.json.gz");
                 const SCHEMA_HASH: &str =
                     include_str!("../../../../resources/schema/schema.json.sha256");
+                let schema_hash = SCHEMA_HASH.trim();
 
-                if path.get(1).is_some_and(|hash| hash == &SCHEMA_HASH) {
+                if path.get(1).is_some_and(|hash| hash == &schema_hash) {
                     Ok(Resource::new("application/json", SCHEMA_JSON.to_vec())
                         .into_http_response()
                         .with_immutable_cache()
                         .with_header(CONTENT_ENCODING, "gzip"))
                 } else {
-                    Ok(HttpResponse::redirect(format!("/api/schema/{SCHEMA_HASH}")))
+                    Ok(HttpResponse::redirect(format!("/api/schema/{schema_hash}")))
                 }
             }
             "token" => {

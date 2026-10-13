@@ -27,6 +27,7 @@ members = [
     "crates/services",
     "crates/utils",
     "crates/common",
+    "crates/deltachat",
     "crates/trc",
     "crates/migration",
     "tests",

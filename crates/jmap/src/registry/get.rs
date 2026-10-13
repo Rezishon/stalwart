@@ -184,6 +184,7 @@ impl RegistryGet for Server {
             | ObjectType::TracingStore
             | ObjectType::WebDav
             | ObjectType::WebHook
+            | ObjectType::DeltaChat
             | ObjectType::Account
             | ObjectType::DsnReportSettings
             | ObjectType::MailingList

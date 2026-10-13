@@ -468,16 +468,45 @@ impl ParseHttp for Server {
                 return Ok(self.handle_scim_request(req, session, access_token).await);
             }
             // SPDX-SnippetEnd
+            "apps" if req.uri().path().starts_with("/apps/xdcstore/") => {
+                self.is_http_anonymous_request_allowed(session.remote_ip)
+                    .await?;
+
+                let dc_obj = self
+                    .registry()
+                    .object::<registry::schema::structs::DeltaChat>(types::id::Id::singleton())
+                    .await
+                    .map_err(|err| trc::ResourceEvent::Error.reason(err))?;
+                let settings = match dc_obj {
+                    Some(dc) => deltachat::config::DeltaChatSettings::from(dc),
+                    None => deltachat::config::DeltaChatSettings::default(),
+                };
+
+                if !settings.enabled {
+                    return Err(trc::ResourceEvent::NotFound.into_err());
+                }
+
+                if let Some((bytes, content_type)) = deltachat::dispatch_xdc_asset(req.uri().path()) {
+                    return Ok(HttpResponse::new(StatusCode::OK)
+                        .with_content_type(content_type)
+                        .with_immutable_cache()
+                        .with_binary_body(bytes.to_vec()));
+                } else {
+                    return Err(trc::ResourceEvent::NotFound.into_err());
+                }
+            }
             "api" => {
                 // Allow CORS preflight requests
                 if req.method() == Method::OPTIONS {
-                    return Ok(HttpResponse::new(StatusCode::NO_CONTENT));
+                    return Ok(HttpResponse::new(StatusCode::NO_CONTENT).with_cors_unrestricted());
                 }
 
                 return Ok(match self.handle_api_request(&mut req, &session).await {
                     Ok(response) => response,
                     Err(err) => {
-                        let response = err.into_http_response(AuthChallenge::Bearer);
+                        let response = err
+                            .into_http_response(AuthChallenge::Bearer)
+                            .with_cors_unrestricted();
                         trc::error!(err.span_id(session.session_id));
                         response
                     }
@@ -687,7 +716,7 @@ impl ParseHttp for Server {
             }
             external => {
                 if path.next().is_none() {
-                    if !external.is_empty() {
+                    if !external.is_empty() && !external.contains('.') {
                         return Ok(HttpResponse::redirect(format!("/{external}/")));
                     } else if let Some(url) = &self.core.network.http.redirect_root {
                         return Ok(HttpResponse::redirect(url.clone()));
@@ -711,6 +740,34 @@ impl ParseHttp for Server {
                     } else {
                         response.with_no_cache()
                     });
+                }
+
+                if let Some(asset) = deltachat::dispatch_web_asset(req.uri().path()) {
+                    self.is_http_anonymous_request_allowed(session.remote_ip)
+                        .await?;
+                    if self
+                        .is_http_banned_path(req.uri().path(), session.remote_ip)
+                        .await?
+                    {
+                        return Err(trc::ResourceEvent::NotFound.into_err());
+                    }
+
+                    let dc_obj = self
+                        .registry()
+                        .object::<registry::schema::structs::DeltaChat>(types::id::Id::singleton())
+                        .await
+                        .map_err(|err| trc::ResourceEvent::Error.reason(err))?;
+                    let settings = match dc_obj {
+                        Some(dc) => deltachat::config::DeltaChatSettings::from(dc),
+                        None => deltachat::config::DeltaChatSettings::default(),
+                    };
+
+                    if settings.enabled {
+                        return Ok(HttpResponse::new(StatusCode::OK)
+                            .with_content_type(asset.content_type)
+                            .with_header(hyper::header::CACHE_CONTROL, asset.cache_control)
+                            .with_binary_body(asset.bytes.to_vec()));
+                    }
                 }
             }
         }

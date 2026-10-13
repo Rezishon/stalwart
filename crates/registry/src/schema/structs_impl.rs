@@ -47645,3 +47645,170 @@ impl RegistryJsonPropertyPatch for ZenohCoordinator {
         }
     }
 }
+
+impl ObjectImpl for DeltaChat {
+    const FLAGS: u64 = OBJ_SINGLETON;
+    const VERSION: u8 = 2;
+    const OBJECT: ObjectType = ObjectType::DeltaChat;
+
+    fn validate(&self, errors: &mut Vec<ValidationError>) -> bool {
+        let neb = errors.len();
+        for id in self.allowed_domains.iter() {
+            if !id.is_valid() {
+                errors.push(ValidationError::required(Property::AllowedDomains));
+            }
+        }
+        errors.len() == neb
+    }
+
+    fn index<'x>(&'x self, i: &mut IndexBuilder<'x>) {
+        if self.domain_id.is_valid() {
+            i.foreign_key(ObjectType::Domain, self.domain_id.into(), None);
+        }
+        for id in self.allowed_domains.iter() {
+            i.foreign_key(ObjectType::Domain, Some(*id), None);
+        }
+    }
+}
+
+impl Pickle for DeltaChat {
+    fn pickle(&self, out: &mut Vec<u8>) {
+        self.enabled.pickle(out);
+        self.registration_open.pickle(out);
+        self.instant_accounts_enabled.pickle(out);
+        self.custom_accounts_enabled.pickle(out);
+        self.frontend_path.pickle(out);
+        self.domain_id.pickle(out);
+        self.allowed_domains.pickle(out);
+        self.altcha_required.pickle(out);
+        self.altcha_max_number.pickle(out);
+        self.altcha_hmac_secret.pickle(out);
+    }
+
+    fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
+        let mut this = Self::default();
+        this.enabled = Pickle::unpickle(stream)?;
+        // ponytail: v0 enabled-only; v1 free-text domain/imap (discarded); v2 domain ids
+        if stream.version() >= 1 {
+            this.registration_open = Pickle::unpickle(stream)?;
+            this.instant_accounts_enabled = Pickle::unpickle(stream)?;
+            this.custom_accounts_enabled = Pickle::unpickle(stream)?;
+            this.frontend_path = Pickle::unpickle(stream)?;
+            if stream.version() >= 2 {
+                this.domain_id = Pickle::unpickle(stream)?;
+                this.allowed_domains = Pickle::unpickle(stream)?;
+            } else {
+                let _: String = Pickle::unpickle(stream)?;
+                let _: Map<String> = Pickle::unpickle(stream)?;
+                let _: String = Pickle::unpickle(stream)?;
+                let _: u64 = Pickle::unpickle(stream)?;
+                let _: String = Pickle::unpickle(stream)?;
+                let _: String = Pickle::unpickle(stream)?;
+                let _: u64 = Pickle::unpickle(stream)?;
+                let _: String = Pickle::unpickle(stream)?;
+            }
+            this.altcha_required = Pickle::unpickle(stream)?;
+            this.altcha_max_number = Pickle::unpickle(stream)?;
+            this.altcha_hmac_secret = Pickle::unpickle(stream)?;
+        }
+        Some(this)
+    }
+}
+
+#[cfg(test)]
+mod deltachat_pickle_tests {
+    use super::*;
+    use crate::pickle::PickledStream;
+    use crate::types::ObjectImpl;
+
+    #[test]
+    fn unpickle_v0_enabled_only_blob() {
+        let bytes = [0u8, 1u8]; // AAE=
+        let mut stream = PickledStream::new(&bytes).unwrap();
+        let obj = DeltaChat::unpickle(&mut stream).expect("v0 blob");
+        assert!(obj.enabled);
+        assert!(!obj.domain_id.is_valid());
+    }
+
+    #[test]
+    fn roundtrip_v2() {
+        let orig = DeltaChat {
+            domain_id: Id::from(7u32),
+            allowed_domains: Map::new(vec![Id::from(7u32), Id::from(9u32)]),
+            ..Default::default()
+        };
+        let bytes = orig.to_pickled_vec();
+        let mut stream = PickledStream::new(&bytes).unwrap();
+        assert_eq!(orig, DeltaChat::unpickle(&mut stream).unwrap());
+    }
+}
+
+impl Default for DeltaChat {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            registration_open: true,
+            instant_accounts_enabled: true,
+            custom_accounts_enabled: true,
+            frontend_path: None,
+            domain_id: Default::default(),
+            allowed_domains: Default::default(),
+            altcha_required: false,
+            altcha_max_number: 100_000,
+            altcha_hmac_secret: String::new(),
+        }
+    }
+}
+
+impl IntoValue for DeltaChat {
+    fn into_value(self) -> JmapValue<'static> {
+        let mut map = jmap_tools::Map::with_capacity(12);
+        map.insert_unchecked(Property::Enabled, self.enabled.into_value());
+        map.insert_unchecked(Property::RegistrationOpen, self.registration_open.into_value());
+        map.insert_unchecked(
+            Property::InstantAccountsEnabled,
+            self.instant_accounts_enabled.into_value(),
+        );
+        map.insert_unchecked(
+            Property::CustomAccountsEnabled,
+            self.custom_accounts_enabled.into_value(),
+        );
+        map.insert_unchecked(Property::FrontendPath, self.frontend_path.into_value());
+        map.insert_unchecked(Property::DomainId, self.domain_id.into_value());
+        map.insert_unchecked(Property::AllowedDomains, self.allowed_domains.into_value());
+        map.insert_unchecked(Property::AltchaRequired, self.altcha_required.into_value());
+        map.insert_unchecked(Property::AltchaMaxNumber, self.altcha_max_number.into_value());
+        map.insert_unchecked(Property::AltchaHmacSecret, self.altcha_hmac_secret.into_value());
+        JmapValue::Object(map)
+    }
+}
+
+impl RegistryJsonPropertyPatch for DeltaChat {
+    fn patch_property<'x>(
+        &mut self,
+        mut pointer: JsonPointerPatch<'_>,
+        value: JmapValue<'x>,
+    ) -> PatchResult<'x> {
+        match pointer.next_property() {
+            Some(Property::Enabled) => self.enabled.patch(pointer, value),
+            Some(Property::RegistrationOpen) => self.registration_open.patch(pointer, value),
+            Some(Property::InstantAccountsEnabled) => {
+                self.instant_accounts_enabled.patch(pointer, value)
+            }
+            Some(Property::CustomAccountsEnabled) => {
+                self.custom_accounts_enabled.patch(pointer, value)
+            }
+            Some(Property::FrontendPath) => self.frontend_path.patch(pointer, value),
+            Some(Property::DomainId) => self.domain_id.patch(pointer, value),
+            Some(Property::AllowedDomains) => self.allowed_domains.patch(pointer, value),
+            Some(Property::AltchaRequired) => self.altcha_required.patch(pointer, value),
+            Some(Property::AltchaMaxNumber) => self.altcha_max_number.patch(pointer, value),
+            Some(Property::AltchaHmacSecret) => self.altcha_hmac_secret.patch(pointer, value),
+            Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
+                property: Property::Type,
+                value,
+            }),
+            _ => Err(PatchError::new(pointer, "Invalid property")),
+        }
+    }
+}

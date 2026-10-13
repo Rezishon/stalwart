@@ -6320,3 +6320,28 @@ pub struct ZenohCoordinator {
     #[serde(rename = "config")]
     pub config: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeltaChat {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+    #[serde(rename = "registrationOpen")]
+    pub registration_open: bool,
+    #[serde(rename = "instantAccountsEnabled")]
+    pub instant_accounts_enabled: bool,
+    #[serde(rename = "customAccountsEnabled")]
+    pub custom_accounts_enabled: bool,
+    #[serde(rename = "frontendPath")]
+    pub frontend_path: Option<String>,
+    #[serde(rename = "domainId")]
+    pub domain_id: Id,
+    #[serde(rename = "allowedDomains")]
+    pub allowed_domains: Map<Id>,
+    #[serde(rename = "altchaRequired")]
+    pub altcha_required: bool,
+    #[serde(rename = "altchaMaxNumber")]
+    pub altcha_max_number: u64,
+    #[serde(rename = "altchaHmacSecret")]
+    pub altcha_hmac_secret: String,
+}
