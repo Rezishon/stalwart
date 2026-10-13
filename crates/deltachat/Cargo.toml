@@ -1,0 +1,34 @@
+[package]
+name = "deltachat"
+version = "0.16.25"
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+types = { path = "../types" }
+utils = { path = "../utils" }
+store = { path = "../store" }
+registry = { path = "../registry" }
+directory = { path = "../directory" }
+trc = { path = "../trc" }
+http_proto = { path = "../http-proto" }
+hyper = { version = "1.11.1", features = ["server", "http1", "http2"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+hmac = "0.13"
+hex = "0.4"
+form_urlencoded = "1.2"
+tokio = { version = "1.53", features = ["rt", "sync"] }
+base64 = "0.23"
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["rt", "macros"] }
+
+[features]
+test_mode = []
+dev_mode = []
+enterprise = ["common/enterprise", "store/enterprise", "directory/enterprise", "trc/enterprise"]
+
+[lints]
+workspace = true
