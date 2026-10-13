@@ -3,10 +3,6 @@ name: "CI"
 on:
   workflow_dispatch:
     inputs:
-      Docker:
-        required: false
-        default: false
-        type: boolean
       Release:
         required: false
         default: false
@@ -27,92 +23,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  multiarch:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: musl
-    name: Merge image / ${{matrix.variant}}
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-      attestations: write
-      packages: write
-    needs: [linux]
-    if: github.event_name == 'push' || inputs.Docker
-    steps:
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v4.1.2
-      - name: Log In to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{github.repository_owner}}
-          password: ${{github.token}}
-
-      - name: Log In to DockerHub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
-        uses: docker/login-action@v4
-        with:
-          username: ${{secrets.DOCKERHUB_USERNAME}}
-          password: ${{secrets.DOCKERHUB_TOKEN}}
-
-      - name: Download ${{matrix.variant}} meta bake definition
-        uses: actions/download-artifact@v8
-        with:
-          name: bake-meta-${{matrix.variant}}
-          path: ${{ runner.temp }}/${{matrix.variant}}
-
-      - name: Download ${{matrix.variant}} digests
-        uses: actions/download-artifact@v8
-        with:
-          path: ${{ runner.temp }}/${{matrix.variant}}/digests
-          pattern: digests-${{matrix.variant}}-*
-          merge-multiple: true
-
-      - name: Create ${{matrix.variant}} manifest list and push
-        working-directory: ${{ runner.temp }}/${{matrix.variant}}/digests
-        env:
-          HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
-        run: |
-          docker buildx imagetools create $(jq -cr '.target."docker-metadata-action".tags | map(select(startswith("ghcr.io/${{github.repository}}")) | "-t " + .) | join(" ")' ${{ runner.temp }}/${{matrix.variant}}/bake-meta.json) \
-            $(printf 'ghcr.io/${{github.repository}}@sha256:%s ' *)
-          if [ "$HAS_DOCKERHUB" = "true" ]; then
-            docker buildx imagetools create $(jq -cr '.target."docker-metadata-action".tags | map(select(startswith("index.docker.io/${{github.repository}}")) | "-t " + .) | join(" ")' ${{ runner.temp }}/${{matrix.variant}}/bake-meta.json) \
-              $(printf 'index.docker.io/${{github.repository}}@sha256:%s ' *)
-          fi
-
-      - name: Inspect ${{matrix.variant}} image
-        id: manifest-digest
-        env:
-          HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
-        run: |
-          docker buildx imagetools inspect --format '{{json .Manifest}}' ghcr.io/${{github.repository}}:$(jq -r '.target."docker-metadata-action".args.DOCKER_META_VERSION' ${{ runner.temp }}/${{matrix.variant}}/bake-meta.json) | jq -r '.digest' > GHCR_DIGEST_SHA
-          echo "GHCR_DIGEST_SHA=$(cat GHCR_DIGEST_SHA)" | tee -a "${GITHUB_ENV}"
-          cosign sign --yes $(jq --arg GHCR_DIGEST_SHA "$(cat GHCR_DIGEST_SHA)" -cr '.target."docker-metadata-action".tags | map(select(startswith("ghcr.io/${{github.repository}}")) | . + "@" + $GHCR_DIGEST_SHA) | join(" ")' ${{ runner.temp }}/${{matrix.variant}}/bake-meta.json)
-          if [ "$HAS_DOCKERHUB" = "true" ]; then
-            docker buildx imagetools inspect --format '{{json .Manifest}}' index.docker.io/${{github.repository}}:$(jq -r '.target."docker-metadata-action".args.DOCKER_META_VERSION' ${{ runner.temp }}/${{matrix.variant}}/bake-meta.json) | jq -r '.digest' > DOCKERHUB_DIGEST_SHA
-            echo "DOCKERHUB_DIGEST_SHA=$(cat DOCKERHUB_DIGEST_SHA)" | tee -a "${GITHUB_ENV}"
-            cosign sign --yes $(jq --arg DOCKERHUB_DIGEST_SHA "$(cat DOCKERHUB_DIGEST_SHA)" -cr '.target."docker-metadata-action".tags | map(select(startswith("index.docker.io/${{github.repository}}")) | . + "@" + $DOCKERHUB_DIGEST_SHA) | join(" ")' ${{ runner.temp }}/${{matrix.variant}}/bake-meta.json)
-          fi
-
-      - name: Attest GHCR
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-name: ghcr.io/${{github.repository}}
-          subject-digest: ${{ env.GHCR_DIGEST_SHA }}
-          push-to-registry: true
-
-      - name: Attest Dockerhub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-name: index.docker.io/${{github.repository}}
-          subject-digest: ${{ env.DOCKERHUB_DIGEST_SHA }}
-          push-to-registry: true
-
   linux:
     permissions:
       id-token: write
@@ -194,13 +104,6 @@ jobs:
           username: ${{github.repository_owner}}
           password: ${{github.token}}
 
-      - name: Log In to DockerHub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
-        uses: docker/login-action@v4
-        with:
-          username: ${{secrets.DOCKERHUB_USERNAME}}
-          password: ${{secrets.DOCKERHUB_TOKEN}}
-
       - name: Calculate shasum of external deps
         id: cal-dep-shasum
         run: |
@@ -236,21 +139,6 @@ jobs:
             }
           skip-extraction: ${{ steps.cargo-cache.outputs.cache-hit }} && ${{ steps.apt-cache.outputs.cache-hit }}
 
-      - name: Extract Metadata for Docker
-        uses: docker/metadata-action@v6
-        id: meta
-        with:
-          images: |
-            ghcr.io/${{github.repository}}
-            ${{ (secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '') && format('index.docker.io/{0}', github.repository) || '' }}
-          flavor: |
-            suffix=${{matrix.suffix}},onlatest=true
-          tags: |
-            type=ref,event=tag
-            type=ref,event=branch,prefix=branch-
-            type=edge,branch=main
-            type=semver,pattern=v{{major}}.{{minor}}
-
       - name: Build Artifact
         id: bake
         uses: docker/bake-action@v7
@@ -263,13 +151,9 @@ jobs:
           SUFFIX: ${{matrix.suffix}}
         with:
           source: .
-          set: |
-            *.tags=
-            image.output=type=image,"name=${{ (secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '') && format('ghcr.io/{0},index.docker.io/{0}', github.repository) || format('ghcr.io/{0}', github.repository) }}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=9,force-compression=true,oci-mediatypes=true
           files: |
             docker-bake.hcl
-            ${{ steps.meta.outputs.bake-file }}
-          targets: ${{(github.event_name == 'push' || inputs.Docker) && !contains(matrix.target, 'armv7') && 'build,image' || 'build'}}
+          targets: build
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.1
@@ -278,32 +162,6 @@ jobs:
           path: |
             artifact
             !artifact/*.json
-
-      - name: Export digest & Rename meta bake definition file
-        if: (github.event_name == 'push' || inputs.Docker) && !contains(matrix.target, 'armv7')
-        run: |
-          mv "${{ steps.meta.outputs.bake-file }}" "${{ runner.temp }}/bake-meta.json"
-          mkdir -p ${{ runner.temp }}/digests
-          digest="${{ fromJSON(steps.bake.outputs.metadata).image['containerimage.digest'] }}"
-          touch "${{ runner.temp }}/digests/${digest#sha256:}"
-
-      - name: Upload digest
-        if: (github.event_name == 'push' || inputs.Docker) && !contains(matrix.target, 'armv7')
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: digests-musl-${{ matrix.target }}
-          path: ${{ runner.temp }}/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload musl meta bake definition
-        uses: actions/upload-artifact@v7.0.1
-        if: (github.event_name == 'push' || inputs.Docker) && endsWith(matrix.target,'musl') && startsWith(matrix.target,'x86')
-        with:
-          name: bake-meta-musl
-          path: ${{ runner.temp }}/bake-meta.json
-          if-no-files-found: error
-          retention-days: 1
 
   windows:
     name: Build / ${{matrix.target}}
@@ -503,7 +361,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [linux, windows, freebsd, multiarch, release]
+    needs: [linux, windows, freebsd, release]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -516,7 +374,7 @@ jobs:
 
   cleanup:
     name: Cleanup failed release
-    needs: [linux, windows, freebsd, multiarch, release]
+    needs: [linux, windows, freebsd, release]
     if: failure() && startsWith(github.ref, 'refs/tags/') && github.run_attempt >= 3
     runs-on: ubuntu-latest
     permissions:
