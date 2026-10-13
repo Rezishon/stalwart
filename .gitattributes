@@ -1,0 +1,4 @@
+resources/assets.lock text eol=lf
+scripts/fetch-assets.sh text eol=lf
+crates/deltachat/assets/RELAY_REV text eol=lf
+resources/webui.zip binary
