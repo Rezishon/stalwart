@@ -1,0 +1,4 @@
+webui_url=https://github.com/stalwartlabs/webui/releases/latest/download/webui.zip
+webui_sha256=8bd645f75e19c4121d81be6d91a6ebe46a2958b0e7cae9a9b6d4530baef89c91
+relay_repo=https://github.com/riselabs-group/signup-relay.git
+relay_rev=9e37cd2567b89c148fc361e249bcbaa9d622da23
