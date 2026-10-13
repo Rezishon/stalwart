@@ -32,7 +32,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - variant: gnu
           - variant: musl
     name: Merge image / ${{matrix.variant}}
     runs-on: ubuntu-latest
@@ -114,43 +113,31 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            platform: linux/amd64
-            suffix: ""
-            build_env: ""
           - target: x86_64-unknown-linux-musl
             platform: linux/amd64
-            suffix: "-alpine"
-            build_env: ""
-          - target: aarch64-unknown-linux-gnu
-            platform: linux/arm64
             suffix: ""
-            build_env: "JEMALLOC_SYS_WITH_LG_PAGE=16 "
+            build_env: ""
           - target: aarch64-unknown-linux-musl
             platform: linux/arm64
-            suffix: "-alpine"
-            build_env: "JEMALLOC_SYS_WITH_LG_PAGE=16 "
-          - target: armv7-unknown-linux-gnueabihf
-            platform: linux/arm/v7
             suffix: ""
             build_env: "JEMALLOC_SYS_WITH_LG_PAGE=16 "
           - target: armv7-unknown-linux-musleabihf
             platform: linux/arm/v7
-            suffix: "-alpine"
-            build_env: "JEMALLOC_SYS_WITH_LG_PAGE=16 "
-          - target: arm-unknown-linux-gnueabihf
-            platform: linux/arm/v6
             suffix: ""
-            build_env: ""
-          - target: arm-unknown-linux-musleabihf
-            platform: linux/arm/v6
-            suffix: "-alpine"
-            build_env: ""
+            build_env: "JEMALLOC_SYS_WITH_LG_PAGE=16 "
     name: Build / ${{matrix.target}}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Fetch pinned frontend assets
+        run: sh scripts/fetch-assets.sh
 
       - name: Free disk space (heavy ARM targets)
         if: contains(matrix.target, 'arm') || contains(matrix.target, 'aarch64')
@@ -271,7 +258,7 @@ jobs:
           files: |
             docker-bake.hcl
             ${{ steps.meta.outputs.bake-file }}
-          targets: ${{(github.event_name == 'push' || inputs.Docker) && 'build,image' || 'build'}}
+          targets: ${{(github.event_name == 'push' || inputs.Docker) && !contains(matrix.target, 'armv7') && 'build,image' || 'build'}}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.1
@@ -282,7 +269,7 @@ jobs:
             !artifact/*.json
 
       - name: Export digest & Rename meta bake definition file
-        if: github.event_name == 'push' || inputs.Docker
+        if: (github.event_name == 'push' || inputs.Docker) && !contains(matrix.target, 'armv7')
         run: |
           mv "${{ steps.meta.outputs.bake-file }}" "${{ runner.temp }}/bake-meta.json"
           mkdir -p ${{ runner.temp }}/digests
@@ -290,20 +277,11 @@ jobs:
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest
-        if: github.event_name == 'push' || inputs.Docker
+        if: (github.event_name == 'push' || inputs.Docker) && !contains(matrix.target, 'armv7')
         uses: actions/upload-artifact@v7.0.1
         with:
           name: digests-${{matrix.suffix == '' && 'gnu' || 'musl'}}-${{ matrix.target }}
           path: ${{ runner.temp }}/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload GNU meta bake definition
-        uses: actions/upload-artifact@v7.0.1
-        if: (github.event_name == 'push' || inputs.Docker) && endsWith(matrix.target,'gnu') && startsWith(matrix.target,'x86')
-        with:
-          name: bake-meta-gnu
-          path: ${{ runner.temp }}/bake-meta.json
           if-no-files-found: error
           retention-days: 1
 
@@ -330,6 +308,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Fetch pinned frontend assets
+        shell: bash
+        run: sh scripts/fetch-assets.sh
+
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.11
         with:
@@ -341,51 +328,6 @@ jobs:
           cargo build --release --target ${{matrix.target}} -p stalwart --no-default-features --features "sqlite postgres mysql rocks s3 redis azure nats enterprise"
           mkdir -p artifacts
           mv ./target/${{matrix.target}}/release/stalwart.exe ./artifacts/stalwart.exe
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: artifact-${{matrix.target}}
-          path: artifacts
-
-  macos:
-    name: Build / ${{matrix.target}}
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-          - target: x86_64-apple-darwin
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          disable_annotations: true
-
-      #- name: Build FoundationDB Edition
-      #  env:
-      #    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #  run: |
-      #    rustup target add ${{matrix.target}}
-      #    # Pin FoundationDB 7.4.x (Apple publishes these as prereleases)
-      #    curl --retry 5 -Lso foundationdb.pkg "$(gh api -X GET /repos/apple/foundationdb/releases --jq '[.[] | select(.tag_name | startswith("7.4."))] | sort_by(.tag_name | split(".") | map(tonumber)) | reverse | .[0].assets[] | select(.name | test("${{startsWith(matrix.target, 'x86') && 'x86_64' || 'arm64'}}" + ".pkg$")) | .browser_download_url')"
-      #    echo "=== Package contents ==="
-      #    pkgutil --payload-files foundationdb.pkg || true
-      #    sudo installer -allowUntrusted -verbose -dumplog -pkg foundationdb.pkg -target /
-      #    cargo build --release --target ${{matrix.target}} -p stalwart --no-default-features --features "foundationdb s3 redis nats enterprise"
-      #    mkdir -p artifacts
-      #    mv ./target/${{matrix.target}}/release/stalwart ./artifacts/stalwart-foundationdb
-
-      - name: Build
-        run: |
-          rustup target add ${{matrix.target}}
-          cargo build --release --target ${{matrix.target}} -p stalwart --no-default-features --features "sqlite postgres mysql rocks s3 redis azure nats enterprise"
-          mkdir -p artifacts
-          mv ./target/${{matrix.target}}/release/stalwart ./artifacts/stalwart
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.1
@@ -408,6 +350,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Fetch pinned frontend assets
+        run: sh scripts/fetch-assets.sh
 
       - name: Build in FreeBSD VM
         uses: vmactions/freebsd-vm@v1
@@ -456,7 +406,7 @@ jobs:
       contents: write
       attestations: write
     if: github.event_name == 'push' || inputs.Release
-    needs: [linux, windows, macos, freebsd]
+    needs: [linux, windows, freebsd]
     runs-on: ubuntu-latest
     steps:
       # Must run before artifacts are downloaded — checkout cleans the workspace.
@@ -542,7 +492,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [linux, windows, macos, freebsd, multiarch, release]
+    needs: [linux, windows, freebsd, multiarch, release]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -555,7 +505,7 @@ jobs:
 
   cleanup:
     name: Cleanup failed release
-    needs: [linux, windows, macos, freebsd, multiarch, release]
+    needs: [linux, windows, freebsd, multiarch, release]
     if: failure() && startsWith(github.ref, 'refs/tags/') && github.run_attempt >= 3
     runs-on: ubuntu-latest
     permissions:

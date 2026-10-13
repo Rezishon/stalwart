@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.25-rl1] - 2026-10-14
+
+RiseLabs fork. `--version` prints `0.16.25-rl1`. Cargo package version stays `0.16.25`.
+
+### Added
+- Compile-time embed of admin WebUI (`resources/webui.zip`) and DeltaChat relay (`crates/deltachat/assets`). Served from `.rodata`; no download, no unzip on boot.
+- `scripts/fetch-assets.sh` + `resources/assets.lock` pin webui zip SHA and signup-relay rev for rebuilds.
+- Release matrix: linux musl amd64/arm64/armv7, Windows x64, FreeBSD x64. Docker image is scratch musl (amd64+arm64) on GHCR.
+
+### Changed
+- Default GitHub `webui.zip` Application row is no longer inserted. `/admin` and `/account` come from the embed.
+
 ## [0.16.25] - 2026-10-04
 
 If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.

@@ -40,7 +40,7 @@ target "image" {
   cache-from = [
     "type=registry,ref=${GHCR_REPO}-buildcache:${TARGET}"
   ]
-  target = equal("", "${SUFFIX}") ? "gnu" : "musl"
+  target = "musl"
   platforms = [
     "${DOCKER_PLATFORM}"
   ]
