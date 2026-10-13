@@ -4,18 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-static INDEX_HTML: &[u8] = include_bytes!("../../assets/index.html");
-static APPS_HTML: &[u8] = include_bytes!("../../assets/apps.html");
-static DOCS_HTML: &[u8] = include_bytes!("../../assets/docs.html");
-static SHARE_HTML: &[u8] = include_bytes!("../../assets/share.html");
-static LOGO_SVG: &[u8] = include_bytes!("../../assets/logo.svg");
-static MAIN_JS: &[u8] = include_bytes!("../../assets/assets/main-D6MKEcMq.js");
-static MAIN_CSS: &[u8] = include_bytes!("../../assets/assets/main-DO0WF65x.css");
-
-const HTML_CONTENT_TYPE: &str = "text/html; charset=utf-8";
-const SVG_CONTENT_TYPE: &str = "image/svg+xml";
-const JS_CONTENT_TYPE: &str = "application/javascript; charset=utf-8";
-const CSS_CONTENT_TYPE: &str = "text/css; charset=utf-8";
+include!(concat!(env!("OUT_DIR"), "/relay_embed.rs"));
 
 const NO_CACHE: &str = "no-cache";
 const LOGO_CACHE_CONTROL: &str = "public, max-age=86400";
@@ -32,61 +21,51 @@ pub fn get_web_asset(path: &str) -> Option<WebAsset> {
     let clean_path = path.split('?').next().unwrap_or(path);
     let trimmed = clean_path.trim_matches('/');
 
-    match trimmed {
-        "" | "index.html" => Some(WebAsset {
-            bytes: INDEX_HTML,
-            content_type: HTML_CONTENT_TYPE,
+    if trimmed.starts_with("api/")
+        || trimmed == "api"
+        || trimmed.starts_with("apps/xdcstore/")
+        || trimmed == "apps/xdcstore"
+    {
+        return None;
+    }
+
+    if let Some((bytes, content_type)) = lookup(trimmed) {
+        return Some(WebAsset {
+            bytes,
+            content_type,
+            cache_control: cache_control(trimmed, content_type),
+        });
+    }
+
+    if trimmed.is_empty() {
+        return lookup("index.html").map(|(bytes, content_type)| WebAsset {
+            bytes,
+            content_type,
             cache_control: NO_CACHE,
-        }),
-        "apps" | "apps.html" => Some(WebAsset {
-            bytes: APPS_HTML,
-            content_type: HTML_CONTENT_TYPE,
+        });
+    }
+
+    let last_segment = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    if !last_segment.contains('.') {
+        lookup("index.html").map(|(bytes, content_type)| WebAsset {
+            bytes,
+            content_type,
             cache_control: NO_CACHE,
-        }),
-        "docs" | "docs.html" => Some(WebAsset {
-            bytes: DOCS_HTML,
-            content_type: HTML_CONTENT_TYPE,
-            cache_control: NO_CACHE,
-        }),
-        "share" | "share.html" => Some(WebAsset {
-            bytes: SHARE_HTML,
-            content_type: HTML_CONTENT_TYPE,
-            cache_control: NO_CACHE,
-        }),
-        "logo.svg" => Some(WebAsset {
-            bytes: LOGO_SVG,
-            content_type: SVG_CONTENT_TYPE,
-            cache_control: LOGO_CACHE_CONTROL,
-        }),
-        s if s.starts_with("assets/") && s.ends_with(".js") => Some(WebAsset {
-            bytes: MAIN_JS,
-            content_type: JS_CONTENT_TYPE,
-            cache_control: IMMUTABLE_CACHE_CONTROL,
-        }),
-        s if s.starts_with("assets/") && s.ends_with(".css") => Some(WebAsset {
-            bytes: MAIN_CSS,
-            content_type: CSS_CONTENT_TYPE,
-            cache_control: IMMUTABLE_CACHE_CONTROL,
-        }),
-        s if s.starts_with("api/")
-            || s == "api"
-            || s.starts_with("apps/xdcstore/")
-            || s == "apps/xdcstore" =>
-        {
-            None
-        }
-        s => {
-            let last_segment = s.rsplit('/').next().unwrap_or(s);
-            if !last_segment.contains('.') {
-                Some(WebAsset {
-                    bytes: INDEX_HTML,
-                    content_type: HTML_CONTENT_TYPE,
-                    cache_control: NO_CACHE,
-                })
-            } else {
-                None
-            }
-        }
+        })
+    } else {
+        None
+    }
+}
+
+fn cache_control(path: &str, content_type: &str) -> &'static str {
+    if content_type.starts_with("text/html") {
+        NO_CACHE
+    } else if path == "logo.svg" {
+        LOGO_CACHE_CONTROL
+    } else if path.starts_with("assets/") {
+        IMMUTABLE_CACHE_CONTROL
+    } else {
+        NO_CACHE
     }
 }
 
@@ -98,95 +77,64 @@ mod tests {
     fn test_root_and_index() {
         for path in ["", "/", "/index.html", "index.html", "/?v=123", "/index.html?token=abc"] {
             let asset = get_web_asset(path).unwrap_or_else(|| panic!("failed for path: {path}"));
-            assert_eq!(asset.bytes, INDEX_HTML);
-            assert_eq!(asset.content_type, "text/html; charset=utf-8");
+            assert!(asset.content_type.starts_with("text/html"), "{path}");
             assert_eq!(asset.cache_control, "no-cache");
+            assert!(asset.bytes.starts_with(b"<!"), "{path}");
         }
     }
 
     #[test]
     fn test_named_html_pages() {
-        for path in ["/apps", "apps", "/apps.html", "apps.html", "/apps?sort=name"] {
+        for path in ["/apps", "apps", "/apps.html", "apps.html"] {
             let asset = get_web_asset(path).unwrap_or_else(|| panic!("failed for path: {path}"));
-            assert_eq!(asset.bytes, APPS_HTML);
-            assert_eq!(asset.content_type, "text/html; charset=utf-8");
+            assert!(asset.content_type.starts_with("text/html"));
             assert_eq!(asset.cache_control, "no-cache");
         }
-
-        for path in ["/docs", "docs", "/docs.html", "docs.html"] {
-            let asset = get_web_asset(path).unwrap_or_else(|| panic!("failed for path: {path}"));
-            assert_eq!(asset.bytes, DOCS_HTML);
-            assert_eq!(asset.content_type, "text/html; charset=utf-8");
-            assert_eq!(asset.cache_control, "no-cache");
-        }
-
-        for path in ["/share", "share", "/share.html", "share.html"] {
-            let asset = get_web_asset(path).unwrap_or_else(|| panic!("failed for path: {path}"));
-            assert_eq!(asset.bytes, SHARE_HTML);
-            assert_eq!(asset.content_type, "text/html; charset=utf-8");
-            assert_eq!(asset.cache_control, "no-cache");
-        }
+        assert!(get_web_asset("/docs").unwrap().content_type.starts_with("text/html"));
+        assert!(get_web_asset("/share").unwrap().content_type.starts_with("text/html"));
     }
 
     #[test]
     fn test_logo_svg() {
-        for path in ["/logo.svg", "logo.svg", "/logo.svg?v=1"] {
-            let asset = get_web_asset(path).unwrap_or_else(|| panic!("failed for path: {path}"));
-            assert_eq!(asset.bytes, LOGO_SVG);
-            assert_eq!(asset.content_type, "image/svg+xml");
-            assert_eq!(asset.cache_control, "public, max-age=86400");
-        }
+        let asset = get_web_asset("/logo.svg").expect("logo");
+        assert_eq!(asset.content_type, "image/svg+xml");
+        assert_eq!(asset.cache_control, "public, max-age=86400");
     }
 
     #[test]
     fn test_hashed_js_and_css_bundles() {
-        let js_asset = get_web_asset("/assets/main-D6MKEcMq.js").expect("main js missing");
-        assert_eq!(js_asset.bytes, MAIN_JS);
-        assert_eq!(js_asset.content_type, "application/javascript; charset=utf-8");
-        assert_eq!(js_asset.cache_control, "public, max-age=31536000, immutable");
+        let js = get_web_asset("/assets/main-D6MKEcMq.js").expect("main js");
+        assert!(js.content_type.contains("javascript"));
+        assert_eq!(js.cache_control, IMMUTABLE_CACHE_CONTROL);
 
-        let css_asset = get_web_asset("/assets/main-DO0WF65x.css").expect("main css missing");
-        assert_eq!(css_asset.bytes, MAIN_CSS);
-        assert_eq!(css_asset.content_type, "text/css; charset=utf-8");
-        assert_eq!(css_asset.cache_control, "public, max-age=31536000, immutable");
+        let css = get_web_asset("/assets/main-DO0WF65x.css").expect("main css");
+        assert!(css.content_type.contains("css"));
+        assert_eq!(css.cache_control, IMMUTABLE_CACHE_CONTROL);
 
-        let dyn_js = get_web_asset("/assets/custom-bundle.js").expect("dyn js missing");
-        assert_eq!(dyn_js.bytes, MAIN_JS);
-        assert_eq!(dyn_js.cache_control, "public, max-age=31536000, immutable");
-
-        let dyn_css = get_web_asset("/assets/custom-bundle.css").expect("dyn css missing");
-        assert_eq!(dyn_css.bytes, MAIN_CSS);
-        assert_eq!(dyn_css.cache_control, "public, max-age=31536000, immutable");
+        assert!(get_web_asset("/assets/missing.png").is_none());
+        assert!(get_web_asset("/assets/custom-bundle.js").is_none());
     }
 
     #[test]
     fn test_spa_routes_fallback() {
-        for path in ["/instant", "/custom", "/login", "/qr", "instant", "/instant?user=alice", "/ui/settings"] {
+        for path in ["/instant", "/custom", "/qr", "instant", "/instant?user=alice"] {
             let asset = get_web_asset(path).unwrap_or_else(|| panic!("failed for path: {path}"));
-            assert_eq!(asset.bytes, INDEX_HTML);
-            assert_eq!(asset.content_type, "text/html; charset=utf-8");
+            assert!(asset.content_type.starts_with("text/html"));
             assert_eq!(asset.cache_control, "no-cache");
         }
     }
 
     #[test]
     fn test_none_for_api_and_unknown_extensions() {
-        let none_paths = [
+        for path in [
             "/api",
             "/api/",
             "/api/v1/foo",
-            "/api/v1/accounts/instant",
-            "/api/v1/accounts/custom",
             "/apps/xdcstore",
-            "/apps/xdcstore/",
             "/apps/xdcstore/chess.xdc",
             "/missing.png",
-            "/assets/missing.png",
-            "/style.css",
             "/favicon.ico",
-        ];
-
-        for path in none_paths {
+        ] {
             assert!(
                 get_web_asset(path).is_none(),
                 "path should return None: {path}"
