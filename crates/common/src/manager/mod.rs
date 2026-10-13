@@ -18,6 +18,7 @@ pub mod backup;
 pub mod boot;
 pub mod console;
 pub mod defaults;
+pub mod embedded;
 pub mod restore;
 
 pub const SPAM_TRAINER_KEY: &[u8] = "STALWART_SPAM_TRAIN_DATA.lz4".as_bytes();

@@ -139,6 +139,13 @@ impl WebApplications {
         let mut routes = AHashMap::with_capacity(previous.len());
 
         for app in self.applications.load().as_ref() {
+            if app
+                .prefixes
+                .iter()
+                .all(|p| p == "admin" || p == "account")
+            {
+                continue;
+            }
             match app
                 .unpack(server, self.next_generation(), update, sweep_orphans)
                 .await
@@ -461,7 +468,7 @@ impl Default for WebApplications {
     }
 }
 
-fn rewrite_index(html: &str, prefix: &str, oauth_client_id_meta: Option<&str>) -> Vec<u8> {
+pub fn rewrite_index(html: &str, prefix: &str, oauth_client_id_meta: Option<&str>) -> Vec<u8> {
     let mut edits = [
         html.find(BASE_HREF)
             .map(|at| (at, BASE_HREF.len(), IndexEdit::BaseHref(prefix))),
