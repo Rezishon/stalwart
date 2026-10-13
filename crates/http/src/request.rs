@@ -715,11 +715,10 @@ impl ParseHttp for Server {
                     .with_binary_body(LOGIN_PAGE));
             }
             external => {
-                if path.next().is_none() {
+                let is_leaf = path.next().is_none();
+                if is_leaf {
                     if !external.is_empty() && !external.contains('.') {
                         return Ok(HttpResponse::redirect(format!("/{external}/")));
-                    } else if let Some(url) = &self.core.network.http.redirect_root {
-                        return Ok(HttpResponse::redirect(url.clone()));
                     }
                 } else {
                     let rest = req
@@ -774,6 +773,12 @@ impl ParseHttp for Server {
                             .with_header(hyper::header::CACHE_CONTROL, asset.cache_control)
                             .with_binary_body(asset.bytes.to_vec()));
                     }
+                }
+
+                if is_leaf
+                    && let Some(url) = &self.core.network.http.redirect_root
+                {
+                    return Ok(HttpResponse::redirect(url.clone()));
                 }
             }
         }
