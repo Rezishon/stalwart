@@ -104,6 +104,9 @@ jobs:
           username: ${{github.repository_owner}}
           password: ${{github.token}}
 
+      - name: Lowercase GHCR repo
+        run: echo "GHCR_REPO=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Calculate shasum of external deps
         id: cal-dep-shasum
         run: |
@@ -145,7 +148,6 @@ jobs:
         env:
           DOCKER_BUILD_RECORD_UPLOAD: false
           TARGET: ${{matrix.target}}
-          GHCR_REPO: ghcr.io/${{github.repository}}
           BUILD_ENV: ${{matrix.build_env}}
           DOCKER_PLATFORM: ${{matrix.platform}}
           SUFFIX: ${{matrix.suffix}}
