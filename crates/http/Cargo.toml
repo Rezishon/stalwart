@@ -20,6 +20,7 @@ types = { path = "../types" }
 directory = { path =  "../directory" }
 services = { path =  "../services" }
 registry = { path =  "../registry" }
+deltachat = { path = "../deltachat" }
 mail-parser = { version = "0.11", features = ["full_encoding", "rkyv"] } 
 mail-builder = { version = "1.0" }
 mail-auth = { version = "0.13", features = ["generate", "arc"] }

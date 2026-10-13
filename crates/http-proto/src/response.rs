@@ -195,7 +195,7 @@ impl HttpResponse {
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .header(
                 header::ACCESS_CONTROL_ALLOW_HEADERS,
-                "Authorization, Content-Type, Accept, X-Requested-With",
+                "Authorization, Content-Type, Accept, X-Requested-With, Idempotency-Key",
             )
             .header(
                 header::ACCESS_CONTROL_ALLOW_METHODS,
