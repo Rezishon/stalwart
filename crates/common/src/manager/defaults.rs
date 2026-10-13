@@ -543,6 +543,42 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
             .await?;
     }
 
+    {
+        use types::id::Id;
+
+        let sys_domain = bp
+            .registry
+            .object::<SystemSettings>(Id::singleton())
+            .await?
+            .map(|s| s.default_domain_id)
+            .filter(Id::is_valid);
+
+        if let Some(old) = bp
+            .registry
+            .get(ObjectType::DeltaChat.singleton())
+            .await?
+        {
+            let mut dc = DeltaChat::from(old.clone());
+            if !dc.domain_id.is_valid()
+                && let Some(domain_id) = sys_domain
+            {
+                dc.domain_id = domain_id;
+                let new_object = dc.into();
+                bp.registry
+                    .write(RegistryWrite::update(Id::singleton(), &new_object, &old))
+                    .await?;
+            }
+        } else {
+            let mut dc = DeltaChat::default();
+            if let Some(domain_id) = sys_domain {
+                dc.domain_id = domain_id;
+            }
+            bp.registry
+                .write(RegistryWrite::insert(&dc.into()))
+                .await?;
+        }
+    }
+
     #[cfg(not(feature = "test_mode"))]
     {
         use store::write::BatchBuilder;
