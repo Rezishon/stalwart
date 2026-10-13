@@ -14,6 +14,8 @@ relay_repo=
 relay_rev=
 
 while IFS='=' read -r key value; do
+    key=$(printf '%s' "$key" | tr -d '\r')
+    value=$(printf '%s' "$value" | tr -d '\r')
     case "$key" in
         webui_url) webui_url=$value ;;
         webui_sha256) webui_sha256=$value ;;
@@ -30,8 +32,10 @@ fi
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | awk '{print $1}'
-    else
+    elif command -v shasum >/dev/null 2>&1; then
         shasum -a 256 "$1" | awk '{print $1}'
+    else
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
     fi
 }
 
@@ -51,7 +55,7 @@ else
     echo "webui.zip updated"
 fi
 
-if [ -f "$RELAY_REV_FILE" ] && [ "$(cat "$RELAY_REV_FILE")" = "$relay_rev" ] \
+if [ -f "$RELAY_REV_FILE" ] && [ "$(tr -d '\r' < "$RELAY_REV_FILE")" = "$relay_rev" ] \
     && [ -f "$RELAY_DIR/index.html" ]; then
     echo "relay assets ok ($relay_rev)"
     exit 0
