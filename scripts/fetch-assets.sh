@@ -29,6 +29,16 @@ if [ -z "$webui_url" ] || [ -z "$webui_sha256" ] || [ -z "$relay_repo" ] || [ -z
     exit 1
 fi
 
+if [ "$relay_rev" = "HEAD" ] || [ "$relay_rev" = "latest" ]; then
+    resolved=$(git ls-remote "$relay_repo" HEAD | awk '{print $1}')
+    if [ -z "$resolved" ]; then
+        echo "fetch-assets: could not resolve $relay_repo HEAD" >&2
+        exit 1
+    fi
+    echo "relay_rev $relay_rev -> $resolved"
+    relay_rev=$resolved
+fi
+
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | awk '{print $1}'
