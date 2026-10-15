@@ -15,6 +15,8 @@ pub enum EndpointSecurity {
     #[default]
     Ssl,
     Starttls,
+    Default,
+    Plain,
 }
 
 impl EndpointSecurity {
@@ -22,6 +24,26 @@ impl EndpointSecurity {
         match self {
             Self::Ssl => "ssl",
             Self::Starttls => "starttls",
+            Self::Default => "default",
+            Self::Plain => "plain",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CertificateChecks {
+    Automatic = 0,
+    Strict = 1,
+    #[default]
+    AcceptInvalid = 3,
+}
+
+impl CertificateChecks {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Automatic => "0",
+            Self::Strict => "1",
+            Self::AcceptInvalid => "3",
         }
     }
 }
@@ -183,5 +205,15 @@ mod tests {
         assert!(settings.is_domain_id_allowed(1));
         assert!(settings.is_domain_id_allowed(2));
         assert!(!settings.is_domain_id_allowed(3));
+    }
+
+    #[test]
+    fn security_and_ic_round_trip_as_dclogin_tokens() {
+        assert_eq!(EndpointSecurity::Starttls.as_str(), "starttls");
+        assert_eq!(EndpointSecurity::Plain.as_str(), "plain");
+        assert_eq!(EndpointSecurity::Default.as_str(), "default");
+        assert_eq!(CertificateChecks::Strict.as_str(), "1");
+        assert_eq!(CertificateChecks::Automatic.as_str(), "0");
+        assert_eq!(CertificateChecks::AcceptInvalid.as_str(), "3");
     }
 }
