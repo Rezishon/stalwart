@@ -10,7 +10,10 @@ use deltachat::{
     config::DeltaChatSettings,
     dispatch_web_asset, dispatch_xdc_asset,
     error::DeltaChatError,
-    models::{AppsCatalogResponse, HealthResponse},
+    models::{
+        AppsCatalogResponse, ConfigDiscoveryResponse, CustomAccountRequest, CustomAccountResponse,
+        HealthResponse, InstantAccountRequest, InstantAccountResponse,
+    },
     DeltaChatRouter,
 };
 use std::mem::MaybeUninit;
@@ -63,11 +66,91 @@ async fn test_e2e_health_and_config_discovery() {
     assert_eq!(health.version, "1.0.0-chatchi");
     assert!(health.uptime_seconds < 60);
 
-    // GET /api/v1/config reads server.core; dummy_server is MaybeUninit.
+    // GET /api/v1/config and POST /api/v1/accounts/* read server.core; dummy_server is MaybeUninit.
+    // Live GET config / signup HTTP is not run here. Public JSON contract: serde tests below.
     let res = router
         .dispatch_api(&settings, &server, "POST", "/api/v1/config", None)
         .await;
     assert_eq!(res, Err(DeltaChatError::MethodNotAllowed));
+}
+
+#[test]
+fn test_e2e_config_json_requires_hash_algorithm_and_certificate_checks() {
+    let json = r#"{
+        "domain":"example.org",
+        "registration_open":true,
+        "instant_accounts_enabled":true,
+        "custom_accounts_enabled":true,
+        "endpoints":{
+            "imap":{"host":"imap.example.org","port":143,"security":"starttls"},
+            "smtp":{"host":"smtp.example.org","port":587,"security":"plain"}
+        },
+        "altcha":{"required":false,"max_number":1000},
+        "password_hash_algorithm":"scrypt",
+        "certificate_checks":"1"
+    }"#;
+    let cfg: ConfigDiscoveryResponse =
+        serde_json::from_str(json).expect("config JSON must include hash algorithm and ic");
+    assert_eq!(cfg.password_hash_algorithm, "scrypt");
+    assert_eq!(cfg.certificate_checks, "1");
+
+    let missing = r#"{
+        "domain":"example.org",
+        "registration_open":true,
+        "instant_accounts_enabled":true,
+        "custom_accounts_enabled":true,
+        "endpoints":{
+            "imap":{"host":"imap.example.org","port":143,"security":"starttls"},
+            "smtp":{"host":"smtp.example.org","port":587,"security":"plain"}
+        },
+        "altcha":{"required":false,"max_number":1000}
+    }"#;
+    assert!(
+        serde_json::from_str::<ConfigDiscoveryResponse>(missing).is_err(),
+        "config JSON without password_hash_algorithm and certificate_checks must fail"
+    );
+}
+
+#[test]
+fn test_e2e_account_http_contract_hash_only() {
+    let instant_req = InstantAccountRequest {
+        username: "dc_0123456789ab".into(),
+        password_hash: "$scrypt$ln=15,r=8,p=1$c2FsdA$hash".into(),
+        altcha_payload: None,
+        password: None,
+    };
+    let instant_req_json = serde_json::to_string(&instant_req).unwrap();
+    assert!(instant_req_json.contains("\"username\""));
+    assert!(instant_req_json.contains("\"password_hash\""));
+
+    let custom_req = CustomAccountRequest {
+        username: "alice".into(),
+        password_hash: "$scrypt$ln=15,r=8,p=1$c2FsdA$hash".into(),
+        altcha_payload: None,
+        password: None,
+    };
+    let custom_req_json = serde_json::to_string(&custom_req).unwrap();
+    assert!(custom_req_json.contains("\"username\""));
+    assert!(custom_req_json.contains("\"password_hash\""));
+
+    let instant_resp = InstantAccountResponse {
+        account_id: "acc_1".into(),
+        email: "dc_0123456789ab@example.org".into(),
+        account_type: "instant".into(),
+        expires_at: None,
+    };
+    let instant_resp_json = serde_json::to_string(&instant_resp).unwrap();
+    assert!(!instant_resp_json.contains("dclogin_link"));
+    assert!(!instant_resp_json.contains("password"));
+
+    let custom_resp = CustomAccountResponse {
+        account_id: "acc_2".into(),
+        email: "alice@example.org".into(),
+        account_type: "custom".into(),
+    };
+    let custom_resp_json = serde_json::to_string(&custom_resp).unwrap();
+    assert!(!custom_resp_json.contains("dclogin_link"));
+    assert!(!custom_resp_json.contains("password"));
 }
 
 #[tokio::test]
