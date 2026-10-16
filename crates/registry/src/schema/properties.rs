@@ -1199,4 +1199,11 @@ pub enum Property {
     AltchaRequired = 946,
     AltchaMaxNumber = 947,
     AltchaHmacSecret = 948,
+    ImapHost = 949,
+    ImapPort = 950,
+    ImapSecurity = 951,
+    SmtpHost = 952,
+    SmtpPort = 953,
+    SmtpSecurity = 954,
+    CertificateChecks = 955,
 }
