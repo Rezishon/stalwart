@@ -5,7 +5,7 @@
  */
 
 use crate::altcha::AltchaEngine;
-use crate::config::DeltaChatSettings;
+use crate::config::{endpoints_from_settings, fill_empty_endpoint_hosts, DeltaChatSettings};
 use crate::error::DeltaChatError;
 use crate::models::{
     CustomAccountRequest, CustomAccountResponse, InstantAccountRequest, InstantAccountResponse,
@@ -94,7 +94,6 @@ pub fn validate_instant_username(username: &str) -> Result<(), DeltaChatError> {
 }
 
 fn reject_plaintext_and_check_hash(
-    settings: &DeltaChatSettings,
     server: &Server,
     password: &Option<String>,
     password_hash: &str,
@@ -110,7 +109,16 @@ fn reject_plaintext_and_check_hash(
     ) {
         return Err(DeltaChatError::InvalidPasswordHash);
     }
-    if settings.imap.host.is_empty() || settings.smtp.host.is_empty() {
+    Ok(())
+}
+
+fn require_advertised_hosts(
+    settings: &DeltaChatSettings,
+    domain: &str,
+) -> Result<(), DeltaChatError> {
+    let mut endpoints = endpoints_from_settings(settings)?;
+    fill_empty_endpoint_hosts(&mut endpoints, domain);
+    if endpoints.imap.host.is_empty() || endpoints.smtp.host.is_empty() {
         return Err(DeltaChatError::EndpointsNotConfigured);
     }
     Ok(())
@@ -158,13 +166,14 @@ pub async fn handle_instant_account(
         altcha_engine.verify_raw(payload)?;
     }
 
-    reject_plaintext_and_check_hash(settings, server, &req.password, &req.password_hash)?;
+    reject_plaintext_and_check_hash(server, &req.password, &req.password_hash)?;
 
     let domain = resolve_signup_domain(settings, server).await?;
     let domain_name = domain
         .names
         .first()
         .ok_or_else(|| DeltaChatError::InvalidDomain("Domain has no name".into()))?;
+    require_advertised_hosts(settings, domain_name)?;
     let username = req.username.trim().to_ascii_lowercase();
 
     if server
@@ -237,13 +246,14 @@ pub async fn handle_custom_account(
         altcha_engine.verify_raw(payload)?;
     }
 
-    reject_plaintext_and_check_hash(settings, server, &req.password, &req.password_hash)?;
+    reject_plaintext_and_check_hash(server, &req.password, &req.password_hash)?;
 
     let domain = resolve_signup_domain(settings, server).await?;
     let domain_name = domain
         .names
         .first()
         .ok_or_else(|| DeltaChatError::InvalidDomain("Domain has no name".into()))?;
+    require_advertised_hosts(settings, domain_name)?;
 
     let username = req.username.trim().to_ascii_lowercase();
 
@@ -327,5 +337,20 @@ mod tests {
     #[test]
     fn custom_still_rejects_dc_prefix() {
         assert!(validate_username("dc_alice").is_err());
+    }
+
+    #[test]
+    fn empty_hosts_ok_when_primary_domain_present() {
+        let settings = DeltaChatSettings::default();
+        assert!(require_advertised_hosts(&settings, "example.org").is_ok());
+    }
+
+    #[test]
+    fn empty_hosts_fail_without_domain() {
+        let settings = DeltaChatSettings::default();
+        assert_eq!(
+            require_advertised_hosts(&settings, ""),
+            Err(DeltaChatError::EndpointsNotConfigured)
+        );
     }
 }
