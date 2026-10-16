@@ -5,21 +5,16 @@
  */
 
 use crate::altcha::AltchaEngine;
-use crate::config::{endpoints_from_settings, DeltaChatSettings};
-use crate::dclogin::build_dclogin_uri;
+use crate::config::DeltaChatSettings;
 use crate::error::DeltaChatError;
 use crate::models::{
     CustomAccountRequest, CustomAccountResponse, InstantAccountRequest, InstantAccountResponse,
 };
+use crate::password_hash::password_hash_matches;
 use common::Server;
-use directory::core::secret::hash_secret;
-use registry::schema::{
-    enums::PasswordHashAlgorithm,
-    structs::{Account, Credential, PasswordCredential, UserAccount, UserRoles},
-};
+use registry::schema::structs::{Account, Credential, PasswordCredential, UserAccount, UserRoles};
 use registry::types::list::List;
 use std::sync::Arc;
-use store::rand::{RngExt, distr::Alphanumeric, rng};
 use store::registry::write::{RegistryWrite, RegistryWriteResult};
 use types::id::Id;
 
@@ -82,23 +77,43 @@ pub fn validate_username(username: &str) -> Result<(), DeltaChatError> {
     Ok(())
 }
 
-pub fn validate_password(password: &str) -> Result<(), DeltaChatError> {
-    if password.len() < 8 {
-        return Err(DeltaChatError::InvalidPassword(
-            "Password must be at least 8 characters".to_string(),
-        ));
+pub fn validate_instant_username(username: &str) -> Result<(), DeltaChatError> {
+    let u = username.trim().to_ascii_lowercase();
+    let ok = u.len() == 15
+        && u.starts_with("dc_")
+        && u.as_bytes()[3..]
+            .iter()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    if ok {
+        Ok(())
+    } else {
+        Err(DeltaChatError::InvalidUsername(
+            "Instant username must match dc_ + 12 hex chars".into(),
+        ))
     }
-    Ok(())
 }
 
-pub fn generate_instant_credentials(domain: &str) -> (String, String) {
-    let mut rng = rng();
-    let hex_part: u64 = rng.random_range(0..0x1_000_000_000_000u64);
-    let email = format!("dc_{hex_part:012x}@{domain}");
-    let password: String = (0..24)
-        .map(|_| rng.sample(Alphanumeric) as char)
-        .collect();
-    (email, password)
+fn reject_plaintext_and_check_hash(
+    settings: &DeltaChatSettings,
+    server: &Server,
+    password: &Option<String>,
+    password_hash: &str,
+) -> Result<(), DeltaChatError> {
+    if password.is_some() {
+        return Err(DeltaChatError::InvalidPassword(
+            "Plaintext password is not accepted".into(),
+        ));
+    }
+    if !password_hash_matches(
+        server.core.network.security.password_hash_algorithm,
+        password_hash,
+    ) {
+        return Err(DeltaChatError::InvalidPasswordHash);
+    }
+    if settings.imap.host.is_empty() || settings.smtp.host.is_empty() {
+        return Err(DeltaChatError::EndpointsNotConfigured);
+    }
+    Ok(())
 }
 
 async fn resolve_signup_domain(
@@ -133,7 +148,8 @@ pub async fn handle_instant_account(
         return Err(DeltaChatError::InstantAccountsDisabled);
     }
 
-    // Verify Altcha if required
+    validate_instant_username(&req.username)?;
+
     if settings.altcha_required {
         let payload = req
             .altcha_payload
@@ -142,30 +158,31 @@ pub async fn handle_instant_account(
         altcha_engine.verify_raw(payload)?;
     }
 
+    reject_plaintext_and_check_hash(settings, server, &req.password, &req.password_hash)?;
+
     let domain = resolve_signup_domain(settings, server).await?;
     let domain_name = domain
         .names
         .first()
         .ok_or_else(|| DeltaChatError::InvalidDomain("Domain has no name".into()))?;
-    let (email, password) = generate_instant_credentials(domain_name);
-    let (local_part, _) = email
-        .split_once('@')
-        .ok_or_else(|| DeltaChatError::Internal("Invalid generated email".to_string()))?;
+    let username = req.username.trim().to_ascii_lowercase();
 
-    let hashed_secret = hash_secret(
-        PasswordHashAlgorithm::Argon2id,
-        password.as_bytes().to_vec(),
-    )
-    .await
-    .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
+    if server
+        .account_id_from_parts(&username, domain.id)
+        .await
+        .map_err(|e| DeltaChatError::Internal(e.to_string()))?
+        .is_some()
+    {
+        return Err(DeltaChatError::AccountAlreadyExists);
+    }
 
     let account = Account::User(UserAccount {
-        name: local_part.to_string(),
+        name: username.clone(),
         domain_id: Id::from(domain.id),
         roles: UserRoles::User,
         credentials: List::from_iter([Credential::Password(PasswordCredential {
             credential_id: 0u64.into(),
-            secret: hashed_secret,
+            secret: req.password_hash.clone(),
             ..Default::default()
         })]),
         description: "DeltaChat Instant Account".to_string().into(),
@@ -186,17 +203,9 @@ pub async fn handle_instant_account(
         other => return Err(DeltaChatError::Internal(other.to_string())),
     };
 
-    let dclogin_link = build_dclogin_uri(
-        &email,
-        &password,
-        &endpoints_from_settings(settings)?,
-    );
-
     Ok(InstantAccountResponse {
         account_id,
-        email,
-        password,
-        dclogin_link,
+        email: format!("{username}@{domain_name}"),
         account_type: "instant".to_string(),
         expires_at: None,
     })
@@ -219,9 +228,7 @@ pub async fn handle_custom_account(
     }
 
     validate_username(&req.username)?;
-    validate_password(&req.password)?;
 
-    // Verify Altcha if required
     if settings.altcha_required {
         let payload = req
             .altcha_payload
@@ -229,6 +236,8 @@ pub async fn handle_custom_account(
             .ok_or(DeltaChatError::AltchaRequired)?;
         altcha_engine.verify_raw(payload)?;
     }
+
+    reject_plaintext_and_check_hash(settings, server, &req.password, &req.password_hash)?;
 
     let domain = resolve_signup_domain(settings, server).await?;
     let domain_name = domain
@@ -238,7 +247,6 @@ pub async fn handle_custom_account(
 
     let username = req.username.trim().to_ascii_lowercase();
 
-    // Check conflict
     if server
         .account_id_from_parts(&username, domain.id)
         .await
@@ -248,20 +256,13 @@ pub async fn handle_custom_account(
         return Err(DeltaChatError::AccountAlreadyExists);
     }
 
-    let hashed_secret = hash_secret(
-        PasswordHashAlgorithm::Argon2id,
-        req.password.as_bytes().to_vec(),
-    )
-    .await
-    .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
-
     let account = Account::User(UserAccount {
         name: username.clone(),
         domain_id: Id::from(domain.id),
         roles: UserRoles::User,
         credentials: List::from_iter([Credential::Password(PasswordCredential {
             credential_id: 0u64.into(),
-            secret: hashed_secret,
+            secret: req.password_hash.clone(),
             ..Default::default()
         })]),
         description: "DeltaChat Custom Account".to_string().into(),
@@ -282,17 +283,9 @@ pub async fn handle_custom_account(
         other => return Err(DeltaChatError::Internal(other.to_string())),
     };
 
-    let email = format!("{username}@{domain_name}");
-    let dclogin_link = build_dclogin_uri(
-        &email,
-        &req.password,
-        &endpoints_from_settings(settings)?,
-    );
-
     Ok(CustomAccountResponse {
         account_id,
-        email,
-        dclogin_link,
+        email: format!("{username}@{domain_name}"),
         account_type: "custom".to_string(),
     })
 }
@@ -318,16 +311,21 @@ mod tests {
     }
 
     #[test]
-    fn test_password_validation() {
-        assert!(validate_password("12345678").is_ok());
-        assert!(validate_password("short").is_err());
+    fn instant_username_must_be_dc_hex12() {
+        assert!(validate_instant_username("dc_0123456789ab").is_ok());
+        assert!(validate_instant_username("alice").is_err());
+        assert!(validate_instant_username("dc_ZZ").is_err());
     }
 
     #[test]
-    fn test_generate_instant_credentials() {
-        let (email, password) = generate_instant_credentials("example.org");
-        assert!(email.starts_with("dc_"));
-        assert!(email.ends_with("@example.org"));
-        assert_eq!(password.len(), 24);
+    fn plaintext_password_field_is_rejected_by_model() {
+        let json = r#"{"username":"dc_0123456789ab","password":"secret","password_hash":"$argon2id$x"}"#;
+        let req: InstantAccountRequest = serde_json::from_str(json).unwrap();
+        assert!(req.password.is_some());
+    }
+
+    #[test]
+    fn custom_still_rejects_dc_prefix() {
+        assert!(validate_username("dc_alice").is_err());
     }
 }

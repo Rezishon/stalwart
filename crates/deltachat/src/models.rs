@@ -6,71 +6,65 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct InstantAccountRequest {
     #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password_hash: String,
+    #[serde(default)]
     pub altcha_payload: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl std::fmt::Debug for InstantAccountRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InstantAccountRequest")
+            .field("username", &self.username)
+            .field("password_hash", &"[REDACTED]")
+            .field("altcha_payload", &self.altcha_payload)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstantAccountResponse {
     pub account_id: String,
     pub email: String,
-    pub password: String,
-    pub dclogin_link: String,
     pub account_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
 }
 
-impl std::fmt::Debug for InstantAccountResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InstantAccountResponse")
-            .field("account_id", &self.account_id)
-            .field("email", &self.email)
-            .field("password", &"[REDACTED]")
-            .field("dclogin_link", &"[REDACTED]")
-            .field("account_type", &self.account_type)
-            .field("expires_at", &self.expires_at)
-            .finish()
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomAccountRequest {
     pub username: String,
-    pub password: String,
+    #[serde(default)]
+    pub password_hash: String,
     #[serde(default)]
     pub altcha_payload: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
 }
 
 impl std::fmt::Debug for CustomAccountRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CustomAccountRequest")
             .field("username", &self.username)
-            .field("password", &"[REDACTED]")
+            .field("password_hash", &"[REDACTED]")
             .field("altcha_payload", &self.altcha_payload)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
             .finish()
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomAccountResponse {
     pub account_id: String,
     pub email: String,
-    pub dclogin_link: String,
     pub account_type: String,
-}
-
-impl std::fmt::Debug for CustomAccountResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CustomAccountResponse")
-            .field("account_id", &self.account_id)
-            .field("email", &self.email)
-            .field("dclogin_link", &"[REDACTED]")
-            .field("account_type", &self.account_type)
-            .finish()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,35 +132,31 @@ mod tests {
     fn test_secret_redaction_debug() {
         let req = CustomAccountRequest {
             username: "alice".into(),
-            password: "super_secret_password".into(),
+            password_hash: "super_secret_password".into(),
             altcha_payload: None,
+            password: Some("plain".into()),
         };
         let debug_str = format!("{req:?}");
         assert!(!debug_str.contains("super_secret_password"));
+        assert!(!debug_str.contains("plain"));
         assert!(debug_str.contains("[REDACTED]"));
 
         let resp = InstantAccountResponse {
             account_id: "acc_123".into(),
             email: "alice@domain.org".into(),
-            password: "plain_password".into(),
-            dclogin_link: "dclogin:alice@domain.org".into(),
             account_type: "instant".into(),
             expires_at: None,
         };
         let resp_debug = format!("{resp:?}");
-        assert!(!resp_debug.contains("plain_password"));
-        assert!(!resp_debug.contains("dclogin:alice@domain.org"));
-        assert!(resp_debug.contains("[REDACTED]"));
+        assert!(resp_debug.contains("alice@domain.org"));
 
         let custom_resp = CustomAccountResponse {
             account_id: "acc_456".into(),
             email: "bob@domain.org".into(),
-            dclogin_link: "dclogin:bob@domain.org/?p=secret".into(),
             account_type: "custom".into(),
         };
         let custom_debug = format!("{custom_resp:?}");
-        assert!(!custom_debug.contains("secret"));
-        assert!(custom_debug.contains("[REDACTED]"));
+        assert!(custom_debug.contains("bob@domain.org"));
     }
 
     #[test]

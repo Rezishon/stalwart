@@ -8,7 +8,6 @@ pub mod altcha;
 pub mod assets;
 pub mod catalog;
 pub mod config;
-pub mod dclogin;
 pub mod error;
 pub mod handlers;
 pub mod models;

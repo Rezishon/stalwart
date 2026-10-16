@@ -7,14 +7,12 @@
 use common::Server;
 use deltachat::{
     altcha::{AltchaChallenge, AltchaEngine, AltchaPayload},
-    config::{DeltaChatSettings, EndpointSecurity, EndpointsConfig, MailEndpointConfig},
-    dclogin::build_dclogin_uri,
+    config::DeltaChatSettings,
     dispatch_web_asset, dispatch_xdc_asset,
     error::DeltaChatError,
     models::{AppsCatalogResponse, HealthResponse},
     DeltaChatRouter,
 };
-use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -132,52 +130,6 @@ async fn test_e2e_altcha_challenge_and_verification() {
         Err(DeltaChatError::AltchaReplay),
         "replayed payload must be rejected"
     );
-}
-
-#[test]
-fn test_e2e_dclogin_builder_compliance() {
-    let endpoints = EndpointsConfig {
-        imap: MailEndpointConfig {
-            host: "imap.deltachat.example.org".to_string(),
-            port: 993,
-            security: EndpointSecurity::Ssl,
-        },
-        smtp: MailEndpointConfig {
-            host: "smtp.deltachat.example.org".to_string(),
-            port: 587,
-            security: EndpointSecurity::Starttls,
-        },
-    };
-
-    let email = "alice@deltachat.example.org";
-    let password = "SuperSecretPassword123!#&";
-
-    // 1. Build dclogin: URI with custom parameters
-    let uri = build_dclogin_uri(email, password, &endpoints);
-
-    // 2. Verify RFC / DeltaChat URL structure
-    assert!(
-        uri.starts_with("dclogin:alice@deltachat.example.org/?"),
-        "URI must start with dclogin:<email>/?"
-    );
-
-    let query_str = uri
-        .strip_prefix("dclogin:alice@deltachat.example.org/?")
-        .expect("dclogin prefix match");
-
-    let params: HashMap<String, String> = form_urlencoded::parse(query_str.as_bytes())
-        .into_owned()
-        .collect();
-
-    assert_eq!(params.get("ih").map(String::as_str), Some("imap.deltachat.example.org"));
-    assert_eq!(params.get("ip").map(String::as_str), Some("993"));
-    assert_eq!(params.get("is").map(String::as_str), Some("ssl"));
-    assert_eq!(params.get("sh").map(String::as_str), Some("smtp.deltachat.example.org"));
-    assert_eq!(params.get("sp").map(String::as_str), Some("587"));
-    assert_eq!(params.get("ss").map(String::as_str), Some("starttls"));
-    assert_eq!(params.get("ic").map(String::as_str), Some("3"));
-    assert_eq!(params.get("p").map(String::as_str), Some("SuperSecretPassword123!#&"));
-    assert_eq!(params.get("v").map(String::as_str), Some("1"));
 }
 
 #[tokio::test]
