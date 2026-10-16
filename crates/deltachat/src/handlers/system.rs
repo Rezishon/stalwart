@@ -33,6 +33,7 @@ pub fn handle_config(
     altcha_engine: &AltchaEngine,
     domain: String,
     endpoints: EndpointsConfig,
+    password_hash_algorithm: &str,
 ) -> Result<ConfigDiscoveryResponse, DeltaChatError> {
     if !settings.enabled {
         return Err(DeltaChatError::DeltaChatDisabled);
@@ -66,6 +67,8 @@ pub fn handle_config(
             max_number: settings.altcha_max_number,
             challenge,
         },
+        password_hash_algorithm: password_hash_algorithm.to_string(),
+        certificate_checks: settings.certificate_checks.as_str().to_string(),
     })
 }
 
@@ -83,7 +86,9 @@ pub fn handle_altcha_challenge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EndpointSecurity, MailEndpointConfig};
+    use crate::config::{
+        endpoints_from_settings, CertificateChecks, EndpointSecurity, MailEndpointConfig,
+    };
 
     fn test_endpoints() -> EndpointsConfig {
         EndpointsConfig {
@@ -125,6 +130,7 @@ mod tests {
             &altcha,
             "localhost".into(),
             test_endpoints(),
+            "argon2id",
         )
         .unwrap();
         assert_eq!(config.domain, "localhost");
@@ -132,6 +138,34 @@ mod tests {
         assert_eq!(config.endpoints.smtp.port, 465);
         assert!(!config.altcha.required);
         assert!(config.altcha.challenge.is_none());
+    }
+
+    #[test]
+    fn config_includes_hash_algorithm_and_ic() {
+        let mut settings = DeltaChatSettings::default();
+        settings.imap = MailEndpointConfig {
+            host: "imap.example.org".into(),
+            port: 993,
+            security: EndpointSecurity::Ssl,
+        };
+        settings.smtp = MailEndpointConfig {
+            host: "smtp.example.org".into(),
+            port: 465,
+            security: EndpointSecurity::Ssl,
+        };
+        settings.certificate_checks = CertificateChecks::Strict;
+        let engine = AltchaEngine::new(b"secret".to_vec(), 1000);
+        let resp = handle_config(
+            &settings,
+            &engine,
+            "example.org".into(),
+            endpoints_from_settings(&settings).unwrap(),
+            "argon2id",
+        )
+        .unwrap();
+        assert_eq!(resp.password_hash_algorithm, "argon2id");
+        assert_eq!(resp.certificate_checks, "1");
+        assert_eq!(resp.endpoints.imap.host, "imap.example.org");
     }
 
     #[test]

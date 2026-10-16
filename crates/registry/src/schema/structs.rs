@@ -6344,4 +6344,18 @@ pub struct DeltaChat {
     pub altcha_max_number: u64,
     #[serde(rename = "altchaHmacSecret")]
     pub altcha_hmac_secret: String,
+    #[serde(rename = "imapHost")]
+    pub imap_host: String,
+    #[serde(rename = "imapPort")]
+    pub imap_port: u64,
+    #[serde(rename = "imapSecurity")]
+    pub imap_security: String,
+    #[serde(rename = "smtpHost")]
+    pub smtp_host: String,
+    #[serde(rename = "smtpPort")]
+    pub smtp_port: u64,
+    #[serde(rename = "smtpSecurity")]
+    pub smtp_security: String,
+    #[serde(rename = "certificateChecks")]
+    pub certificate_checks: String,
 }

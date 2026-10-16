@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use common::Server;
-use registry::schema::enums::ServiceProtocol;
+use crate::error::DeltaChatError;
 use serde::{Deserialize, Serialize};
 use types::id::Id;
 
@@ -15,6 +14,8 @@ pub enum EndpointSecurity {
     #[default]
     Ssl,
     Starttls,
+    Default,
+    Plain,
 }
 
 impl EndpointSecurity {
@@ -22,6 +23,26 @@ impl EndpointSecurity {
         match self {
             Self::Ssl => "ssl",
             Self::Starttls => "starttls",
+            Self::Default => "default",
+            Self::Plain => "plain",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CertificateChecks {
+    Automatic = 0,
+    Strict = 1,
+    #[default]
+    AcceptInvalid = 3,
+}
+
+impl CertificateChecks {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Automatic => "0",
+            Self::Strict => "1",
+            Self::AcceptInvalid => "3",
         }
     }
 }
@@ -59,6 +80,9 @@ pub struct DeltaChatSettings {
     pub altcha_required: bool,
     pub altcha_max_number: u64,
     pub altcha_hmac_secret: String,
+    pub imap: MailEndpointConfig,
+    pub smtp: MailEndpointConfig,
+    pub certificate_checks: CertificateChecks,
 }
 
 impl Default for DeltaChatSettings {
@@ -74,6 +98,17 @@ impl Default for DeltaChatSettings {
             altcha_required: false,
             altcha_max_number: 100_000,
             altcha_hmac_secret: String::new(),
+            imap: MailEndpointConfig {
+                host: String::new(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: String::new(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+            certificate_checks: CertificateChecks::AcceptInvalid,
         }
     }
 }
@@ -91,6 +126,7 @@ impl DeltaChatSettings {
         self.altcha_hmac_secret.as_bytes().to_vec()
     }
 
+    #[cfg(test)]
     pub fn default_endpoints() -> EndpointsConfig {
         EndpointsConfig {
             imap: MailEndpointConfig {
@@ -105,39 +141,29 @@ impl DeltaChatSettings {
             },
         }
     }
+}
 
-    pub fn advertised_endpoints(server: &Server) -> EndpointsConfig {
-        let default_host = if server.core.network.server_name.is_empty() {
-            "localhost"
-        } else {
-            server.core.network.server_name.as_str()
-        };
-        EndpointsConfig {
-            imap: advertised_mail_endpoint(server, ServiceProtocol::Imap, default_host, 993),
-            smtp: advertised_mail_endpoint(server, ServiceProtocol::Smtp, default_host, 465),
-        }
+pub fn endpoints_from_settings(settings: &DeltaChatSettings) -> Result<EndpointsConfig, DeltaChatError> {
+    Ok(EndpointsConfig {
+        imap: settings.imap.clone(),
+        smtp: settings.smtp.clone(),
+    })
+}
+
+fn parse_security(s: &str) -> EndpointSecurity {
+    match s {
+        "starttls" => EndpointSecurity::Starttls,
+        "default" => EndpointSecurity::Default,
+        "plain" => EndpointSecurity::Plain,
+        _ => EndpointSecurity::Ssl,
     }
 }
 
-fn advertised_mail_endpoint(
-    server: &Server,
-    protocol: ServiceProtocol,
-    default_host: &str,
-    port: u16,
-) -> MailEndpointConfig {
-    let host = server
-        .core
-        .network
-        .info
-        .services
-        .get(&protocol)
-        .and_then(|s| s.hostname.as_deref())
-        .unwrap_or(default_host)
-        .to_string();
-    MailEndpointConfig {
-        host,
-        port,
-        security: EndpointSecurity::Ssl,
+fn parse_ic(s: &str) -> CertificateChecks {
+    match s {
+        "0" => CertificateChecks::Automatic,
+        "1" => CertificateChecks::Strict,
+        _ => CertificateChecks::AcceptInvalid,
     }
 }
 
@@ -154,6 +180,17 @@ impl From<registry::schema::structs::DeltaChat> for DeltaChatSettings {
             altcha_required: c.altcha_required,
             altcha_max_number: c.altcha_max_number,
             altcha_hmac_secret: c.altcha_hmac_secret,
+            imap: MailEndpointConfig {
+                host: c.imap_host,
+                port: u16::try_from(c.imap_port).unwrap_or(993),
+                security: parse_security(&c.imap_security),
+            },
+            smtp: MailEndpointConfig {
+                host: c.smtp_host,
+                port: u16::try_from(c.smtp_port).unwrap_or(465),
+                security: parse_security(&c.smtp_security),
+            },
+            certificate_checks: parse_ic(&c.certificate_checks),
         }
     }
 }
@@ -183,5 +220,15 @@ mod tests {
         assert!(settings.is_domain_id_allowed(1));
         assert!(settings.is_domain_id_allowed(2));
         assert!(!settings.is_domain_id_allowed(3));
+    }
+
+    #[test]
+    fn security_and_ic_round_trip_as_dclogin_tokens() {
+        assert_eq!(EndpointSecurity::Starttls.as_str(), "starttls");
+        assert_eq!(EndpointSecurity::Plain.as_str(), "plain");
+        assert_eq!(EndpointSecurity::Default.as_str(), "default");
+        assert_eq!(CertificateChecks::Strict.as_str(), "1");
+        assert_eq!(CertificateChecks::Automatic.as_str(), "0");
+        assert_eq!(CertificateChecks::AcceptInvalid.as_str(), "3");
     }
 }

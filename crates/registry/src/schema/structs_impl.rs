@@ -47648,7 +47648,7 @@ impl RegistryJsonPropertyPatch for ZenohCoordinator {
 
 impl ObjectImpl for DeltaChat {
     const FLAGS: u64 = OBJ_SINGLETON;
-    const VERSION: u8 = 2;
+    const VERSION: u8 = 3;
     const OBJECT: ObjectType = ObjectType::DeltaChat;
 
     fn validate(&self, errors: &mut Vec<ValidationError>) -> bool {
@@ -47657,6 +47657,21 @@ impl ObjectImpl for DeltaChat {
             if !id.is_valid() {
                 errors.push(ValidationError::required(Property::AllowedDomains));
             }
+        }
+        if !matches!(
+            self.imap_security.as_str(),
+            "ssl" | "starttls" | "default" | "plain"
+        ) {
+            errors.push(ValidationError::required(Property::ImapSecurity));
+        }
+        if !matches!(
+            self.smtp_security.as_str(),
+            "ssl" | "starttls" | "default" | "plain"
+        ) {
+            errors.push(ValidationError::required(Property::SmtpSecurity));
+        }
+        if !matches!(self.certificate_checks.as_str(), "0" | "1" | "3") {
+            errors.push(ValidationError::required(Property::CertificateChecks));
         }
         errors.len() == neb
     }
@@ -47683,12 +47698,19 @@ impl Pickle for DeltaChat {
         self.altcha_required.pickle(out);
         self.altcha_max_number.pickle(out);
         self.altcha_hmac_secret.pickle(out);
+        self.imap_host.pickle(out);
+        self.imap_port.pickle(out);
+        self.imap_security.pickle(out);
+        self.smtp_host.pickle(out);
+        self.smtp_port.pickle(out);
+        self.smtp_security.pickle(out);
+        self.certificate_checks.pickle(out);
     }
 
     fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
         let mut this = Self::default();
         this.enabled = Pickle::unpickle(stream)?;
-        // ponytail: v0 enabled-only; v1 free-text domain/imap (discarded); v2 domain ids
+        // ponytail: v0 enabled-only; v1 free-text domain/imap (discarded); v2 domain ids; v3 endpoints
         if stream.version() >= 1 {
             this.registration_open = Pickle::unpickle(stream)?;
             this.instant_accounts_enabled = Pickle::unpickle(stream)?;
@@ -47710,6 +47732,15 @@ impl Pickle for DeltaChat {
             this.altcha_required = Pickle::unpickle(stream)?;
             this.altcha_max_number = Pickle::unpickle(stream)?;
             this.altcha_hmac_secret = Pickle::unpickle(stream)?;
+            if stream.version() >= 3 {
+                this.imap_host = Pickle::unpickle(stream)?;
+                this.imap_port = Pickle::unpickle(stream)?;
+                this.imap_security = Pickle::unpickle(stream)?;
+                this.smtp_host = Pickle::unpickle(stream)?;
+                this.smtp_port = Pickle::unpickle(stream)?;
+                this.smtp_security = Pickle::unpickle(stream)?;
+                this.certificate_checks = Pickle::unpickle(stream)?;
+            }
         }
         Some(this)
     }
@@ -47718,7 +47749,7 @@ impl Pickle for DeltaChat {
 #[cfg(test)]
 mod deltachat_pickle_tests {
     use super::*;
-    use crate::pickle::PickledStream;
+    use crate::pickle::{Pickle, PickledStream};
     use crate::types::ObjectImpl;
 
     #[test]
@@ -47731,7 +47762,7 @@ mod deltachat_pickle_tests {
     }
 
     #[test]
-    fn roundtrip_v2() {
+    fn roundtrip_current() {
         let orig = DeltaChat {
             domain_id: Id::from(7u32),
             allowed_domains: Map::new(vec![Id::from(7u32), Id::from(9u32)]),
@@ -47740,6 +47771,48 @@ mod deltachat_pickle_tests {
         let bytes = orig.to_pickled_vec();
         let mut stream = PickledStream::new(&bytes).unwrap();
         assert_eq!(orig, DeltaChat::unpickle(&mut stream).unwrap());
+    }
+
+    #[test]
+    fn roundtrip_v3_endpoints() {
+        let orig = DeltaChat {
+            imap_host: "imap.example.org".into(),
+            imap_port: 993,
+            imap_security: "ssl".into(),
+            smtp_host: "smtp.example.org".into(),
+            smtp_port: 465,
+            smtp_security: "starttls".into(),
+            certificate_checks: "1".into(),
+            ..Default::default()
+        };
+        let bytes = orig.to_pickled_vec();
+        let mut stream = PickledStream::new(&bytes).unwrap();
+        assert_eq!(orig, DeltaChat::unpickle(&mut stream).unwrap());
+    }
+
+    #[test]
+    fn unpickle_v2_leaves_endpoint_defaults() {
+        let mut bytes = vec![2u8];
+        true.pickle(&mut bytes);
+        true.pickle(&mut bytes);
+        true.pickle(&mut bytes);
+        true.pickle(&mut bytes);
+        None::<String>.pickle(&mut bytes);
+        Id::from(7u32).pickle(&mut bytes);
+        Map::<Id>::default().pickle(&mut bytes);
+        false.pickle(&mut bytes);
+        100_000u64.pickle(&mut bytes);
+        String::new().pickle(&mut bytes);
+        let mut stream = PickledStream::new(&bytes).unwrap();
+        let obj = DeltaChat::unpickle(&mut stream).unwrap();
+        assert_eq!(obj.domain_id, Id::from(7u32));
+        assert_eq!(obj.imap_host, "");
+        assert_eq!(obj.imap_port, 993);
+        assert_eq!(obj.imap_security, "ssl");
+        assert_eq!(obj.smtp_host, "");
+        assert_eq!(obj.smtp_port, 465);
+        assert_eq!(obj.smtp_security, "ssl");
+        assert_eq!(obj.certificate_checks, "3");
     }
 }
 
@@ -47756,13 +47829,20 @@ impl Default for DeltaChat {
             altcha_required: false,
             altcha_max_number: 100_000,
             altcha_hmac_secret: String::new(),
+            imap_host: String::new(),
+            imap_port: 993,
+            imap_security: "ssl".into(),
+            smtp_host: String::new(),
+            smtp_port: 465,
+            smtp_security: "ssl".into(),
+            certificate_checks: "3".into(),
         }
     }
 }
 
 impl IntoValue for DeltaChat {
     fn into_value(self) -> JmapValue<'static> {
-        let mut map = jmap_tools::Map::with_capacity(12);
+        let mut map = jmap_tools::Map::with_capacity(17);
         map.insert_unchecked(Property::Enabled, self.enabled.into_value());
         map.insert_unchecked(Property::RegistrationOpen, self.registration_open.into_value());
         map.insert_unchecked(
@@ -47779,6 +47859,13 @@ impl IntoValue for DeltaChat {
         map.insert_unchecked(Property::AltchaRequired, self.altcha_required.into_value());
         map.insert_unchecked(Property::AltchaMaxNumber, self.altcha_max_number.into_value());
         map.insert_unchecked(Property::AltchaHmacSecret, self.altcha_hmac_secret.into_value());
+        map.insert_unchecked(Property::ImapHost, self.imap_host.into_value());
+        map.insert_unchecked(Property::ImapPort, self.imap_port.into_value());
+        map.insert_unchecked(Property::ImapSecurity, self.imap_security.into_value());
+        map.insert_unchecked(Property::SmtpHost, self.smtp_host.into_value());
+        map.insert_unchecked(Property::SmtpPort, self.smtp_port.into_value());
+        map.insert_unchecked(Property::SmtpSecurity, self.smtp_security.into_value());
+        map.insert_unchecked(Property::CertificateChecks, self.certificate_checks.into_value());
         JmapValue::Object(map)
     }
 }
@@ -47804,6 +47891,13 @@ impl RegistryJsonPropertyPatch for DeltaChat {
             Some(Property::AltchaRequired) => self.altcha_required.patch(pointer, value),
             Some(Property::AltchaMaxNumber) => self.altcha_max_number.patch(pointer, value),
             Some(Property::AltchaHmacSecret) => self.altcha_hmac_secret.patch(pointer, value),
+            Some(Property::ImapHost) => self.imap_host.patch(pointer, value),
+            Some(Property::ImapPort) => self.imap_port.patch(pointer, value),
+            Some(Property::ImapSecurity) => self.imap_security.patch(pointer, value),
+            Some(Property::SmtpHost) => self.smtp_host.patch(pointer, value),
+            Some(Property::SmtpPort) => self.smtp_port.patch(pointer, value),
+            Some(Property::SmtpSecurity) => self.smtp_security.patch(pointer, value),
+            Some(Property::CertificateChecks) => self.certificate_checks.patch(pointer, value),
             Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
                 property: Property::Type,
                 value,

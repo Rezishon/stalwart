@@ -25,6 +25,8 @@ pub enum DeltaChatError {
     NotFound(&'static str),
     MethodNotAllowed,
     BadRequest(String),
+    InvalidPasswordHash,
+    EndpointsNotConfigured,
     Internal(String),
 }
 
@@ -45,6 +47,10 @@ impl fmt::Display for DeltaChatError {
             Self::NotFound(msg) => write!(f, "Not found: {msg}"),
             Self::MethodNotAllowed => write!(f, "Method not allowed"),
             Self::BadRequest(msg) => write!(f, "Bad request: {msg}"),
+            Self::InvalidPasswordHash => {
+                write!(f, "Password hash does not match the configured algorithm")
+            }
+            Self::EndpointsNotConfigured => write!(f, "IMAP/SMTP endpoints are not configured"),
             Self::Internal(msg) => write!(f, "Internal server error: {msg}"),
         }
     }
@@ -72,7 +78,9 @@ impl DeltaChatError {
             | Self::AltchaRequired
             | Self::AltchaInvalid
             | Self::AltchaReplay
-            | Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            | Self::BadRequest(_)
+            | Self::InvalidPasswordHash
+            | Self::EndpointsNotConfigured => StatusCode::BAD_REQUEST,
             Self::AccountAlreadyExists => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -98,6 +106,8 @@ impl DeltaChatError {
             Self::NotFound(_) => "not_found",
             Self::MethodNotAllowed => "method_not_allowed",
             Self::BadRequest(_) => "bad_request",
+            Self::InvalidPasswordHash => "invalid_password_hash",
+            Self::EndpointsNotConfigured => "endpoints_not_configured",
             Self::Internal(_) => "internal_error",
         }
     }
