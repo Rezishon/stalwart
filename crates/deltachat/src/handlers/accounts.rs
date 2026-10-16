@@ -5,7 +5,7 @@
  */
 
 use crate::altcha::AltchaEngine;
-use crate::config::DeltaChatSettings;
+use crate::config::{endpoints_from_settings, DeltaChatSettings};
 use crate::dclogin::build_dclogin_uri;
 use crate::error::DeltaChatError;
 use crate::models::{
@@ -189,7 +189,7 @@ pub async fn handle_instant_account(
     let dclogin_link = build_dclogin_uri(
         &email,
         &password,
-        &DeltaChatSettings::advertised_endpoints(server),
+        &endpoints_from_settings(settings)?,
     );
 
     Ok(InstantAccountResponse {
@@ -286,7 +286,7 @@ pub async fn handle_custom_account(
     let dclogin_link = build_dclogin_uri(
         &email,
         &req.password,
-        &DeltaChatSettings::advertised_endpoints(server),
+        &endpoints_from_settings(settings)?,
     );
 
     Ok(CustomAccountResponse {

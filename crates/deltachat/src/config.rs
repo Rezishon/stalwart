@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use common::Server;
-use registry::schema::enums::ServiceProtocol;
+use crate::error::DeltaChatError;
 use serde::{Deserialize, Serialize};
 use types::id::Id;
 
@@ -81,6 +80,9 @@ pub struct DeltaChatSettings {
     pub altcha_required: bool,
     pub altcha_max_number: u64,
     pub altcha_hmac_secret: String,
+    pub imap: MailEndpointConfig,
+    pub smtp: MailEndpointConfig,
+    pub certificate_checks: CertificateChecks,
 }
 
 impl Default for DeltaChatSettings {
@@ -96,6 +98,17 @@ impl Default for DeltaChatSettings {
             altcha_required: false,
             altcha_max_number: 100_000,
             altcha_hmac_secret: String::new(),
+            imap: MailEndpointConfig {
+                host: String::new(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: String::new(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+            certificate_checks: CertificateChecks::AcceptInvalid,
         }
     }
 }
@@ -113,6 +126,7 @@ impl DeltaChatSettings {
         self.altcha_hmac_secret.as_bytes().to_vec()
     }
 
+    #[cfg(test)]
     pub fn default_endpoints() -> EndpointsConfig {
         EndpointsConfig {
             imap: MailEndpointConfig {
@@ -127,39 +141,29 @@ impl DeltaChatSettings {
             },
         }
     }
+}
 
-    pub fn advertised_endpoints(server: &Server) -> EndpointsConfig {
-        let default_host = if server.core.network.server_name.is_empty() {
-            "localhost"
-        } else {
-            server.core.network.server_name.as_str()
-        };
-        EndpointsConfig {
-            imap: advertised_mail_endpoint(server, ServiceProtocol::Imap, default_host, 993),
-            smtp: advertised_mail_endpoint(server, ServiceProtocol::Smtp, default_host, 465),
-        }
+pub fn endpoints_from_settings(settings: &DeltaChatSettings) -> Result<EndpointsConfig, DeltaChatError> {
+    Ok(EndpointsConfig {
+        imap: settings.imap.clone(),
+        smtp: settings.smtp.clone(),
+    })
+}
+
+fn parse_security(s: &str) -> EndpointSecurity {
+    match s {
+        "starttls" => EndpointSecurity::Starttls,
+        "default" => EndpointSecurity::Default,
+        "plain" => EndpointSecurity::Plain,
+        _ => EndpointSecurity::Ssl,
     }
 }
 
-fn advertised_mail_endpoint(
-    server: &Server,
-    protocol: ServiceProtocol,
-    default_host: &str,
-    port: u16,
-) -> MailEndpointConfig {
-    let host = server
-        .core
-        .network
-        .info
-        .services
-        .get(&protocol)
-        .and_then(|s| s.hostname.as_deref())
-        .unwrap_or(default_host)
-        .to_string();
-    MailEndpointConfig {
-        host,
-        port,
-        security: EndpointSecurity::Ssl,
+fn parse_ic(s: &str) -> CertificateChecks {
+    match s {
+        "0" => CertificateChecks::Automatic,
+        "1" => CertificateChecks::Strict,
+        _ => CertificateChecks::AcceptInvalid,
     }
 }
 
@@ -176,6 +180,17 @@ impl From<registry::schema::structs::DeltaChat> for DeltaChatSettings {
             altcha_required: c.altcha_required,
             altcha_max_number: c.altcha_max_number,
             altcha_hmac_secret: c.altcha_hmac_secret,
+            imap: MailEndpointConfig {
+                host: c.imap_host,
+                port: u16::try_from(c.imap_port).unwrap_or(993),
+                security: parse_security(&c.imap_security),
+            },
+            smtp: MailEndpointConfig {
+                host: c.smtp_host,
+                port: u16::try_from(c.smtp_port).unwrap_or(465),
+                security: parse_security(&c.smtp_security),
+            },
+            certificate_checks: parse_ic(&c.certificate_checks),
         }
     }
 }

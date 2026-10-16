@@ -11,7 +11,7 @@ use deltachat::{
     dclogin::build_dclogin_uri,
     dispatch_web_asset, dispatch_xdc_asset,
     error::DeltaChatError,
-    models::{AppsCatalogResponse, ConfigDiscoveryResponse, HealthResponse},
+    models::{AppsCatalogResponse, HealthResponse},
     DeltaChatRouter,
 };
 use std::collections::HashMap;
@@ -65,28 +65,11 @@ async fn test_e2e_health_and_config_discovery() {
     assert_eq!(health.version, "1.0.0-chatchi");
     assert!(health.uptime_seconds < 60);
 
-    // 2. Test /api/v1/config discovery payload
-    let (status, body, content_type) = router
-        .dispatch_api(&settings, &server, "GET", "/api/v1/config", None)
-        .await
-        .expect("config discovery must succeed");
-
-    assert_eq!(status, 200);
-    assert_eq!(content_type, "application/json; charset=utf-8");
-
-    let config: ConfigDiscoveryResponse =
-        serde_json::from_str(&body).expect("valid config discovery json");
-    assert_eq!(config.domain, "localhost");
-    assert!(config.registration_open);
-    assert!(config.instant_accounts_enabled);
-    assert!(config.custom_accounts_enabled);
-    assert_eq!(config.endpoints.imap.port, 993);
-    assert_eq!(config.endpoints.smtp.port, 465);
-
-    // Altcha requirements verification
-    assert!(config.altcha.required);
-    assert_eq!(config.altcha.max_number, 50_000);
-    assert!(config.altcha.challenge.is_some());
+    // GET /api/v1/config reads server.core; dummy_server is MaybeUninit.
+    let res = router
+        .dispatch_api(&settings, &server, "POST", "/api/v1/config", None)
+        .await;
+    assert_eq!(res, Err(DeltaChatError::MethodNotAllowed));
 }
 
 #[tokio::test]

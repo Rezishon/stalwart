@@ -126,6 +126,8 @@ pub struct ConfigDiscoveryResponse {
     pub custom_accounts_enabled: bool,
     pub endpoints: ConfigDiscoveryEndpoints,
     pub altcha: ConfigDiscoveryAltcha,
+    pub password_hash_algorithm: String,
+    pub certificate_checks: String,
 }
 
 #[cfg(test)]

@@ -16,6 +16,15 @@ pub fn password_hash_matches(algorithm: PasswordHashAlgorithm, hash: &str) -> bo
     hash.starts_with(prefix)
 }
 
+pub fn password_hash_algorithm_str(a: PasswordHashAlgorithm) -> &'static str {
+    match a {
+        PasswordHashAlgorithm::Argon2id => "argon2id",
+        PasswordHashAlgorithm::Bcrypt => "bcrypt",
+        PasswordHashAlgorithm::Scrypt => "scrypt",
+        PasswordHashAlgorithm::Pbkdf2 => "pbkdf2",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
