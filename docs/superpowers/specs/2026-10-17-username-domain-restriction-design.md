@@ -48,7 +48,7 @@ This specification defines:
                       | - instant_prefix (string)             |
                       | - custom_prefix_enabled (bool)        |
                       | - custom_prefix (string)              |
-                      | - username_blacklist (List<String>)   |
+                      | - username_blacklist (Map<String>)    |
                       +-------------------+-------------------+
                                           |
                       +-------------------+-------------------+
@@ -88,10 +88,14 @@ pub custom_prefix_enabled: bool,
 pub custom_prefix: String,
 
 #[serde(rename = "usernameBlacklist")]
-pub username_blacklist: List<String>,
+pub username_blacklist: Map<String>,
 ```
 
+> **Design Note:** `Map<String>` is used instead of `List<String>` because Stalwart WebUI tags/chips inputs bind to map objects (`{"admin": true, "*support*": true}`). This enables atomic key-based JSON patches without numeric index conversion errors.
+
 ### 4.2. Default Settings & Defaults (`crates/registry/src/schema/structs_impl.rs`)
+
+A single constant `pub const DEFAULT_USERNAME_BLACKLIST: &[&str]` serves as the single source of truth (DRY):
 
 ```rust
 impl Default for DeltaChat {
@@ -102,11 +106,15 @@ impl Default for DeltaChat {
             instant_prefix: "dc_".to_string(),
             custom_prefix_enabled: false,
             custom_prefix: String::new(),
-            username_blacklist: default_username_blacklist(),
+            username_blacklist: Map::new(
+                DEFAULT_USERNAME_BLACKLIST.iter().map(|s| s.to_string()).collect(),
+            ),
         }
     }
 }
 ```
+
+In `RegistryJsonPropertyPatch for DeltaChat`, `instant_prefix` and `custom_prefix` use `patch_empty_ok` to permit clearing prefixes to `""` without JMAP errors.
 
 ### 4.3. DeltaChat Runtime Settings (`crates/deltachat/src/config.rs`)
 
@@ -115,7 +123,7 @@ Mirror the schema fields in `DeltaChatSettings`:
 - `pub instant_prefix: String` (default: `"dc_"`)
 - `pub custom_prefix_enabled: bool` (default: `false`)
 - `pub custom_prefix: String` (default: `""`)
-- `pub username_blacklist: Vec<String>` (default: preloaded security catalog)
+- `pub username_blacklist: Vec<String>` (populated from `c.username_blacklist.into_inner()`)
 
 ### 4.4. WebUI Form Specification (`resources/schema/schema.json.gz`)
 
@@ -128,7 +136,7 @@ In `x:DeltaChat/DeltaChatGeneral`, organize settings into two dedicated UI secti
 - **Custom Account Prefix** (`customPrefix`): `string` input (Default: `""`). Visible/effective when `customPrefixEnabled` is `true`.
 
 #### Section B: Username Restriction Policy
-- **Restricted Usernames & Wildcards** (`usernameBlacklist`): `list` of `string` tags/chips. Admins can view, append, edit, or delete any pattern (e.g. `*admin*`, `support-*`, `billing`).
+- **Restricted Usernames & Wildcards** (`usernameBlacklist`): Tag/chips input (`map` with `boolean` values). Admins can view, append, edit, or delete any pattern (e.g. `*admin*`, `support-*`, `billing`).
 
 ---
 
@@ -145,28 +153,51 @@ Validation occurs in `crates/deltachat/src/handlers/accounts.rs`.
 ### 5.2. Prefix Enforcement Logic
 
 #### Instant Accounts (`validate_instant_username`)
+- Length must be between 3 and 32 characters.
+- Must not match any blacklist pattern (`matches_blacklist`).
 - If `instant_prefix_enabled` is `true`:
-  - Must start with `instant_prefix`.
+  - Must start with `instant_prefix.to_ascii_lowercase()`.
   - Suffix after `instant_prefix` must be exactly 12 hexadecimal characters (`[0-9a-f]`).
 - If `instant_prefix_enabled` is `false`:
   - Username must be between 12 and 16 hexadecimal characters (`[0-9a-f]`).
 
 #### Custom Accounts (`validate_custom_username`)
 - **Instant Collision Guard:**
-  - If `instant_prefix_enabled` is `true` AND `instant_prefix` is non-empty:
-    - If username starts with `instant_prefix`, return `DeltaChatError::InvalidUsername("Username prefix '{instant_prefix}' is reserved for instant accounts")`.
+  - If `settings.instant_accounts_enabled`:
+    - If `instant_prefix_enabled` is `true` AND `instant_prefix` is non-empty:
+      - If username starts with `instant_prefix.to_ascii_lowercase()`, reject with `"Username prefix '{instant_prefix}' is reserved for instant accounts"`.
+    - If `instant_prefix_enabled` is `false` OR `instant_prefix` is empty:
+      - If username is 12..=16 characters and composed entirely of hex characters `[0-9a-f]`, reject with `"Hexadecimal usernames are reserved for instant accounts"`.
 - **Custom Prefix Requirement:**
   - If `custom_prefix_enabled` is `true` AND `custom_prefix` is non-empty:
-    - If username does NOT start with `custom_prefix`, return `DeltaChatError::InvalidUsername("Username must start with prefix '{custom_prefix}'")`.
+    - If username does NOT start with `custom_prefix.to_ascii_lowercase()`, reject with `"Username must start with prefix '{custom_prefix}'"`.
 
-### 5.3. Blacklist & Wildcard Matcher
-Custom usernames are checked against `settings.username_blacklist`:
+### 5.3. Zero-Copy Blacklist & Wildcard Matcher
+Custom and instant usernames are checked against `settings.username_blacklist`:
+- Degenerate wildcards (`*`, `**`, `""`) are guarded and ignored to prevent wildcard slice panics or universal denial-of-service.
 - Matching is case-insensitive.
-- If pattern starts and ends with `*` (e.g., `*admin*`): checks `username.contains("admin")`.
-- If pattern ends with `*` (e.g., `support-*`): checks `username.starts_with("support-")`.
-- If pattern starts with `*` (e.g., `*-bot`): checks `username.ends_with("-bot")`.
-- Otherwise: exact equality match (`username == pattern`).
+- Pattern matching logic:
+  ```rust
+  pub fn matches_blacklist(username: &str, blacklist: &[String]) -> bool {
+      blacklist.iter().any(|pattern| {
+          let pattern = pattern.trim();
+          if pattern.is_empty() {
+              return false;
+          }
+          if let Some(inner) = pattern.strip_prefix('*').and_then(|p| p.strip_suffix('*')) {
+              !inner.is_empty() && username.contains(inner)
+          } else if let Some(prefix) = pattern.strip_suffix('*') {
+              !prefix.is_empty() && username.starts_with(prefix)
+          } else if let Some(suffix) = pattern.strip_prefix('*') {
+              !suffix.is_empty() && username.ends_with(suffix)
+          } else {
+              username == pattern
+          }
+      })
+  }
+  ```
 - If matched: return `DeltaChatError::InvalidUsername("Username is reserved or restricted")`.
+- The legacy `const RESERVED_NAMES: &[&str]` in `accounts.rs` is completely deleted in favor of `settings.username_blacklist`.
 
 ---
 
