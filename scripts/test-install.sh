@@ -55,7 +55,8 @@ expect_fail validate_public_url "mail.example.org"
 expect_fail validate_public_url "ftp://x"
 
 expect_ok validate_admin "random"
-expect_ok validate_admin "admin:twelvechars"
+expect_ok validate_admin "admin:twelvecharss"
+expect_fail validate_admin "admin:twelvechars"
 expect_fail validate_admin "admin:short"
 expect_fail validate_admin "adminonly"
 expect_fail validate_admin ":twelvecharsxx"
@@ -67,6 +68,15 @@ expect_fail validate_mode "0"
 expect_ok validate_yes_no "Y"
 expect_ok validate_yes_no "n"
 expect_fail validate_yes_no "maybe"
+
+expect_ok validate_port 0
+expect_ok validate_port 65535
+expect_fail validate_port 65536
+expect_fail validate_port -1
+expect_ok validate_dc_security ssl
+expect_fail validate_dc_security bogus
+expect_ok validate_dc_ic 3
+expect_fail validate_dc_ic 2
 ok validators
 
 # --- mapping ---
@@ -113,11 +123,11 @@ STALWART_ROLE=primary
 #STALWART_RECOVERY_ADMIN=admin:changeme
 EOF
 upsert_env "$_tmp" STALWART_HOSTNAME mail.example.org
-grep -q '^STALWART_HOSTNAME=mail.example.org$' "$_tmp" || fail upsert-uncomment
+grep -q "^STALWART_HOSTNAME='mail.example.org'$" "$_tmp" || fail upsert-uncomment
 grep -q '^STALWART_ROLE=primary$' "$_tmp" || fail upsert-keep-other
 grep -q '^#STALWART_RECOVERY_ADMIN=admin:changeme$' "$_tmp" || fail upsert-leave-admin
 upsert_env "$_tmp" STALWART_PUBLIC_URL https://mail.example.org
-grep -q '^STALWART_PUBLIC_URL=https://mail.example.org$' "$_tmp" || fail upsert-append
+grep -q "^STALWART_PUBLIC_URL='https://mail.example.org'$" "$_tmp" || fail upsert-append
 rm -f "$_tmp"
 ok upsert_env
 

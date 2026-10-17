@@ -14,6 +14,212 @@ set -u
 
 readonly BASE_URL="https://github.com/stalwartlabs/stalwart/releases/latest/download"
 
+contains_cr_lf_or_quote() {
+    case "$1" in *\'*) return 0 ;; esac
+    _stripped=$(printf '%s' "$1" | tr -d '\n\r')
+    [ "$1" != "$_stripped" ]
+}
+
+quote_env_value() {
+    if contains_cr_lf_or_quote "$1"; then
+        return 1
+    fi
+    printf "'%s'\n" "$1"
+}
+
+validate_source() {
+    [ -n "$1" ] || return 1
+    case "$1" in
+        http://*) return 1 ;;
+        https://*) return 0 ;;
+        *.tar.gz)
+            [ -r "$1" ] || return 1
+            return 0
+            ;;
+    esac
+    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+}
+
+validate_version() {
+    if [ "$1" = latest ]; then
+        return 0
+    fi
+    [ -n "$1" ] || return 1
+    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._-]+$'
+}
+
+validate_prefix() {
+    case "$1" in
+        /*) ;;
+        *) return 1 ;;
+    esac
+    case "$1" in
+        /|/bin|/sbin|/lib|/usr|/dev|/proc|/sys) return 1 ;;
+    esac
+    return 0
+}
+
+validate_user() {
+    [ "${#1}" -ge 1 ] && [ "${#1}" -le 32 ] || return 1
+    printf '%s' "$1" | grep -Eq '^[a-z_][a-z0-9_-]*$'
+}
+
+validate_hostname() {
+    [ -n "$1" ] || return 1
+    case "$1" in
+        *[!A-Za-z0-9.-]*|-*|*-|.*|*.|*..*) return 1 ;;
+    esac
+    return 0
+}
+
+validate_public_url() {
+    case "$1" in
+        https://?*|http://?*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_admin() {
+    if [ "$1" = random ]; then
+        return 0
+    fi
+    if contains_cr_lf_or_quote "$1"; then
+        return 1
+    fi
+    case "$1" in
+        *:*) ;;
+        *) return 1 ;;
+    esac
+    _user="${1%%:*}"
+    _pass="${1#*:}"
+    [ -n "$_user" ] || return 1
+    printf '%s' "$_user" | grep -Eq '^[A-Za-z0-9_-]+$' || return 1
+    [ "${#_pass}" -ge 12 ]
+}
+
+validate_mode() {
+    case "$1" in
+        1|2|3) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_yes_no() {
+    case "$1" in
+        [Yy]|[Yy][Ee][Ss]|[Nn]|[Nn][Oo]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_port() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -ge 0 ] && [ "$1" -le 65535 ]
+}
+
+validate_dc_security() {
+    case "$1" in
+        ssl|starttls|default|plain) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_dc_ic() {
+    case "$1" in
+        0|1|3) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+artifact_target() {
+    case "$1" in
+        Darwin) return 1 ;;
+        Linux)
+            case "$2" in
+                x86_64) printf '%s\n' x86_64-linux ;;
+                aarch64|arm64) printf '%s\n' aarch64-linux ;;
+                armv7l|armv7) printf '%s\n' armv7-linux ;;
+                *) return 1 ;;
+            esac
+            ;;
+        FreeBSD)
+            case "$2" in
+                amd64|x86_64) printf '%s\n' x86_64-freebsd ;;
+                *) return 1 ;;
+            esac
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+download_url() {
+    _src="$1"
+    _tag="$2"
+    _target="$3"
+    case "$_src" in
+        https://*|http://*)
+            printf '%s\n' "${_src%/}/stalwart-${_target}.tar.gz"
+            ;;
+        *)
+            if [ "$_tag" = latest ]; then
+                printf '%s\n' "https://github.com/${_src}/releases/latest/download/stalwart-${_target}.tar.gz"
+            else
+                printf '%s\n' "https://github.com/${_src}/releases/download/${_tag}/stalwart-${_target}.tar.gz"
+            fi
+            ;;
+    esac
+}
+
+resolve_paths() {
+    _prefix="$1"
+    _os="$2"
+    if [ "$_prefix" = /usr/local ]; then
+        _bin_dir=/usr/local/bin
+        _log_dir=/var/log/stalwart
+        if [ "$_os" = freebsd ]; then
+            _conf_dir=/usr/local/etc/stalwart
+            _data_dir=/var/db/stalwart
+        else
+            _conf_dir=/etc/stalwart
+            _data_dir=/var/lib/stalwart
+        fi
+    else
+        _bin_dir="${_prefix}/bin"
+        _conf_dir="${_prefix}/etc"
+        _log_dir="${_prefix}/logs"
+        _data_dir="${_prefix}/data"
+    fi
+    printf '_bin_dir=%s\n_conf_dir=%s\n_data_dir=%s\n_log_dir=%s\n' \
+        "$_bin_dir" "$_conf_dir" "$_data_dir" "$_log_dir"
+}
+
+upsert_env() {
+    _file="$1"
+    _key="$2"
+    _value="$3"
+    if ! quote_env_value "$_value" >/dev/null; then
+        return 1
+    fi
+    _out=$(mktemp)
+    _found=0
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case "$_line" in
+            "${_key}="*|"#${_key}="*)
+                printf '%s=%s\n' "$_key" "'$_value'"
+                _found=1
+                ;;
+            *)
+                printf '%s\n' "$_line"
+                ;;
+        esac
+    done < "$_file" > "$_out"
+    if [ "$_found" -eq 0 ]; then
+        printf '%s=%s\n' "$_key" "'$_value'" >> "$_out"
+    fi
+    cat "$_out" > "$_file"
+    rm -f "$_out"
+}
 main() {
     downloader --check
     need_cmd uname
