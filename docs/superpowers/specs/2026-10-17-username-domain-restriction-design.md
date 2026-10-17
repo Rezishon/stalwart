@@ -1,10 +1,10 @@
-# Design: DeltaChat Registration Prefixes, Phishing Defenses, and Domain Restrictions
+# Design: DeltaChat Registration Prefixes and Phishing Defenses (Restricted Usernames)
 
-**Document ID:** `SPEC-2026-10-17-USERNAME-DOMAIN-RESTRICTION`  
+**Document ID:** `SPEC-2026-10-17-USERNAME-RESTRICTION`  
 **Status:** In Review  
 **Date:** 2026-10-17  
 **Target:** `crates/deltachat`, `crates/registry`, `resources/schema`  
-**Principles:** Clean Code, DRY, KISS, Full Operator Sovereignty (no uneditable hardcoded rules, safe defaults).
+**Principles:** Clean Code, DRY, KISS, Full Operator Sovereignty (admin can configure any domain; all username rules editable in WebUI).
 
 ---
 
@@ -15,8 +15,8 @@ In open and semi-open registration systems (such as DeltaChat onboarding via Sta
 This specification defines:
 1. **Configurable Account Prefixes:** Separate toggleable prefixes for Instant (1-click random) accounts and Custom accounts, fully manageable in the DeltaChat Admin WebUI and propagated to the frontend via `/api/v1/config`.
 2. **Dynamic Username Blacklist & Phishing Defense:** An editable, removable list of restricted usernames and wildcard patterns stored in the DeltaChat schema with sensible security defaults covering system roles, RFC 2142 standards, and phishing lures.
-3. **Domain Restriction Catalog & Guidelines:** A comprehensive taxonomy of dangerous, confusing, and reserved domains that must be restricted at domain creation to avoid routing hijacking, operator confusion, and brand spoofing.
-4. **R&D Industry Standards:** Direct mapping to RFC 2142, RFC 2606, RFC 6761, Unicode TR39, NIST SP 800-63B, and OWASP ASVS v4.0.
+3. **Admin Domain Sovereignty:** The server administrator has complete authority to configure any domain they want (including internal, local, subdomains, or any custom domain). The system imposes zero programmatic restrictions on administrator domain creation; restrictions apply strictly and exclusively to end-user account registration (usernames, prefixes, and blacklists).
+4. **R&D Industry Standards:** Direct mapping to RFC 2142, RFC 5321, RFC 5322, Unicode TR39, NIST SP 800-63B, and OWASP ASVS v4.0.
 
 ---
 
@@ -29,7 +29,6 @@ This specification defines:
 | `crates/deltachat/src/config.rs` | `DeltaChatSettings` lacks prefix and blacklist fields. | Settings are not persisted in registry storage. |
 | `resources/schema/schema.json.gz` | `x:DeltaChat/DeltaChatGeneral` only has service toggles. | No UI inputs for account prefixes or username restrictions. |
 | `crates/deltachat/src/handlers/system.rs` | `/api/v1/config` returns `domain`, `endpoints`, `altcha`. | Frontend SPA cannot know registration prefix policies dynamically. |
-| Domain Management | No explicit validation against reserved RFC TLDs or major provider collisions. | Operators could accidentally configure `localhost`, `gmail.com`, or reserved subdomains. |
 
 ---
 
@@ -317,79 +316,27 @@ Broad substring restrictions for persistent security:
 
 ---
 
-## 7. Domain Restriction Catalog & Standards
+## 7. Domain Architecture: Administrator Sovereignty & Best-Practice Reference
 
-When configuring domains in Stalwart (or configuring allowed signup domains in DeltaChat), certain domains must never be registered to prevent traffic hijacking, internal namespace collision, or user confusion.
+### 7.1. Full Administrator Sovereignty
+Stalwart does **not** restrict or block administrators from creating or configuring any domain of their choice. Administrators have full autonomy to host:
+- Public root and subdomains (`chat.example.com`, `example.org`).
+- Local or test environments (`localhost`, `.test`, `.lan`, `.internal`).
+- Multi-tenant or private organizational namespaces.
 
-### 7.1. RFC 2606 & RFC 6761 Special-Use & Reserved Domains
-These domains are globally reserved by IETF and must never be permitted as hosted email domains:
-| Domain Pattern | Standard | Reason |
-|---|---|---|
-| `localhost`, `*.localhost` | RFC 6761 | Loopback address; creates local routing loops and security bypasses. |
-| `example`, `example.com`, `example.net`, `example.org` | RFC 2606 | Reserved for documentation and testing. |
-| `*.test` | RFC 2606 | Reserved for testing environments. |
-| `*.invalid` | RFC 2606 | Reserved for demonstrably invalid domain constructions. |
-| `*.local` | RFC 6762 | Multicast DNS (mDNS) namespace; causes mDNS collisions. |
-| `*.internal`, `*.lan` | RFC 6761 / ICANN | Reserved private internal network names. |
-| `*.onion` | RFC 7686 | Tor hidden services; incompatible with standard SMTP MX resolution. |
-| `*.home.arpa` | RFC 8375 | Home networking reverse mapping. |
+**All restrictions in this specification apply strictly and exclusively to end-user account registration (usernames, prefixes, and username blacklists).**
 
-### 7.2. Major Public Email Providers (Spoofing & Collision Prevention)
-Stalwart should prevent operators or tenants from accidentally configuring hosted domains that collide with global email providers:
-```
-gmail.com
-googlemail.com
-outlook.com
-hotmail.com
-live.com
-msn.com
-yahoo.com
-ymail.com
-icloud.com
-me.com
-mac.com
-proton.me
-protonmail.com
-tutanota.com
-tuta.com
-zoho.com
-yandex.com
-yandex.ru
-mail.ru
-gmx.com
-gmx.net
-web.de
-fastmail.com
-```
+### 7.2. Administrator Best-Practice Reference (Informational)
+For administrators planning domain architectures, the following industry best practices are recommended to avoid user confusion and deliverability problems:
 
-### 7.3. Core Software & Brand Domains
-Prevents unauthorized deployment masquerading as official platform nodes:
-```
-delta.chat
-testrun.org
-stalw.art
-stalwartlabs.com
-```
-
-### 7.4. Top-Level Domains (TLDs) & Public Suffixes
-A bare TLD or Public Suffix (e.g., `com`, `org`, `co.uk`, `github.io`) cannot be registered as an email domain. Stalwart enforces that any domain has at least one label plus a valid TLD (`label.tld`).
-
-### 7.5. Reserved Protocol Subdomains
-Subdomains typically used for server infrastructure should not be configured as standalone email domains:
-```
-mail.*
-smtp.*
-imap.*
-pop.*
-mx.*
-ns.*
-ns1.*
-ns2.*
-autodiscover.*
-autoconfig.*
-mta-sts.*
-_dmarc.*
-```
+1. **Avoid RFC 2606 / RFC 6761 Special-Use Names in Production:**
+   - Domains like `.test`, `.invalid`, `.example`, and `localhost` are non-routable on the public internet. They should only be used in isolated development or testing environments.
+2. **Avoid Collisions with Public Mail Providers:**
+   - Hosting domains that match major public providers (e.g. `gmail.com`, `outlook.com`, `icloud.com`) within a private network causes local delivery interception, breaking outbound communication to actual users of those services.
+3. **Dedicated Subdomains for Chat/Messaging:**
+   - Using dedicated subdomains (such as `chat.domain.com` or `mail.domain.com`) separates IMAP/SMTP messaging infrastructure and reputation from corporate apex domains.
+4. **Punycode / IDN Awareness:**
+   - Internationalized Domain Names (IDNs) should be carefully audited by operators to ensure they do not visually mimic established brand domains.
 
 ---
 
