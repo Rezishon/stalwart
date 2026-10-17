@@ -114,11 +114,13 @@ fn reject_plaintext_and_check_hash(
 
 fn require_advertised_hosts(
     settings: &DeltaChatSettings,
+    primary: &str,
     domain: &str,
 ) -> Result<(), DeltaChatError> {
     let mut endpoints = endpoints_from_settings(settings)?;
     fill_empty_endpoint_hosts(&mut endpoints, domain);
-    if endpoints.imap.host.is_empty() || endpoints.smtp.host.is_empty() {
+    fill_empty_endpoint_hosts(&mut endpoints, primary);
+    if endpoints.imap.host.trim().is_empty() || endpoints.smtp.host.trim().is_empty() {
         return Err(DeltaChatError::EndpointsNotConfigured);
     }
     Ok(())
@@ -173,7 +175,7 @@ pub async fn handle_instant_account(
         .names
         .first()
         .ok_or_else(|| DeltaChatError::InvalidDomain("Domain has no name".into()))?;
-    require_advertised_hosts(settings, domain_name)?;
+    require_advertised_hosts(settings, &server.core.email.default_domain_name, domain_name)?;
     let username = req.username.trim().to_ascii_lowercase();
 
     if server
@@ -253,7 +255,7 @@ pub async fn handle_custom_account(
         .names
         .first()
         .ok_or_else(|| DeltaChatError::InvalidDomain("Domain has no name".into()))?;
-    require_advertised_hosts(settings, domain_name)?;
+    require_advertised_hosts(settings, &server.core.email.default_domain_name, domain_name)?;
 
     let username = req.username.trim().to_ascii_lowercase();
 
@@ -342,14 +344,19 @@ mod tests {
     #[test]
     fn empty_hosts_ok_when_primary_domain_present() {
         let settings = DeltaChatSettings::default();
-        assert!(require_advertised_hosts(&settings, "example.org").is_ok());
+        assert!(require_advertised_hosts(&settings, "example.org", "").is_ok());
+        assert!(require_advertised_hosts(&settings, "", "example.org").is_ok());
     }
 
     #[test]
     fn empty_hosts_fail_without_domain() {
         let settings = DeltaChatSettings::default();
         assert_eq!(
-            require_advertised_hosts(&settings, ""),
+            require_advertised_hosts(&settings, "", ""),
+            Err(DeltaChatError::EndpointsNotConfigured)
+        );
+        assert_eq!(
+            require_advertised_hosts(&settings, "localhost", ""),
             Err(DeltaChatError::EndpointsNotConfigured)
         );
     }

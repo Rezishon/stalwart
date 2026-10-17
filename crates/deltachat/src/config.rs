@@ -151,13 +151,14 @@ pub fn endpoints_from_settings(settings: &DeltaChatSettings) -> Result<Endpoints
 }
 
 pub fn fill_empty_endpoint_hosts(endpoints: &mut EndpointsConfig, domain: &str) {
-    if domain.is_empty() {
+    let domain = domain.trim();
+    if domain.is_empty() || domain == "localhost" || domain == "localhost.local" {
         return;
     }
-    if endpoints.imap.host.is_empty() {
+    if endpoints.imap.host.trim().is_empty() {
         endpoints.imap.host = domain.to_string();
     }
-    if endpoints.smtp.host.is_empty() {
+    if endpoints.smtp.host.trim().is_empty() {
         endpoints.smtp.host = domain.to_string();
     }
 }
@@ -299,5 +300,25 @@ mod tests {
         fill_empty_endpoint_hosts(&mut endpoints, "");
         assert!(endpoints.imap.host.is_empty());
         assert_eq!(endpoints.smtp.host, "smtp.custom");
+    }
+
+    #[test]
+    fn dummy_localhost_does_not_fill_hosts() {
+        let mut endpoints = EndpointsConfig {
+            imap: MailEndpointConfig {
+                host: String::new(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: String::new(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+        };
+        fill_empty_endpoint_hosts(&mut endpoints, "localhost");
+        fill_empty_endpoint_hosts(&mut endpoints, "localhost.local");
+        assert!(endpoints.imap.host.is_empty());
+        assert!(endpoints.smtp.host.is_empty());
     }
 }

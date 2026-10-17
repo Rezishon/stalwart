@@ -80,6 +80,7 @@ impl DeltaChatRouter {
         let mut endpoints = endpoints_from_settings(settings)?;
         let algo = password_hash_algorithm_str(server.core.network.security.password_hash_algorithm);
         if !settings.domain_id.is_valid() {
+            fill_empty_endpoint_hosts(&mut endpoints, &server.core.email.default_domain_name);
             return Ok(("localhost".into(), endpoints, algo));
         }
         let domain = server
@@ -93,6 +94,7 @@ impl DeltaChatRouter {
             .map(|n| n.to_string())
             .ok_or_else(|| DeltaChatError::InvalidDomain("Primary domain has no name".into()))?;
         fill_empty_endpoint_hosts(&mut endpoints, &name);
+        fill_empty_endpoint_hosts(&mut endpoints, &server.core.email.default_domain_name);
         Ok((name, endpoints, algo))
     }
 
