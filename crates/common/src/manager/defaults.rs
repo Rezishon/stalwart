@@ -534,7 +534,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                     .await?;
             }
         } else {
-            let mut dc = DeltaChat::default();
+            let mut dc = delta_chat_from_env();
             if let Some(domain_id) = sys_domain {
                 dc.domain_id = domain_id;
             }
@@ -568,6 +568,38 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
     Ok(())
 }
 
+
+
+pub(crate) fn delta_chat_from_get(get: impl Fn(&str) -> Option<String>) -> DeltaChat {
+    let mut dc = DeltaChat::default();
+    dc.imap_host = env_str_from(get("STALWART_DC_IMAP_HOST").as_deref(), "");
+    dc.imap_port = u64::from(env_u16_from(
+        get("STALWART_DC_IMAP_PORT").as_deref(),
+        env_u16_from(get("STALWART_LISTEN_IMAP").as_deref(), 993),
+    ));
+    dc.imap_security = match get("STALWART_DC_IMAP_SECURITY").as_deref().map(str::trim) {
+        Some(s @ ("ssl" | "starttls" | "default" | "plain")) => s.to_string(),
+        _ => "ssl".into(),
+    };
+    dc.smtp_host = env_str_from(get("STALWART_DC_SMTP_HOST").as_deref(), "");
+    dc.smtp_port = u64::from(env_u16_from(
+        get("STALWART_DC_SMTP_PORT").as_deref(),
+        env_u16_from(get("STALWART_LISTEN_SUBMISSIONS").as_deref(), 465),
+    ));
+    dc.smtp_security = match get("STALWART_DC_SMTP_SECURITY").as_deref().map(str::trim) {
+        Some(s @ ("ssl" | "starttls" | "default" | "plain")) => s.to_string(),
+        _ => "ssl".into(),
+    };
+    dc.certificate_checks = match get("STALWART_DC_IC").as_deref().map(str::trim) {
+        Some(s @ ("0" | "1" | "3")) => s.to_string(),
+        _ => "3".into(),
+    };
+    dc
+}
+
+pub(crate) fn delta_chat_from_env() -> DeltaChat {
+    delta_chat_from_get(|k| std::env::var(k).ok())
+}
 
 pub(crate) fn default_listener_specs_from(
     get: impl Fn(&str) -> Option<String>,
@@ -657,8 +689,8 @@ pub(crate) fn env_str(key: &str, default: &str) -> String {
 #[cfg(test)]
 mod env_parse_tests {
     use super::{
-        default_listener_specs_from, env_bool_from, env_str_from, env_u16_from,
-        recovery_http_port_from,
+        default_listener_specs_from, delta_chat_from_get, env_bool_from, env_str_from,
+        env_u16_from, recovery_http_port_from,
     };
 
     #[test]
@@ -716,5 +748,30 @@ mod env_parse_tests {
         assert_eq!(recovery_http_port_from(Some("9090"), Some("8080")), 9090);
         assert_eq!(recovery_http_port_from(None, Some("9080")), 9080);
         assert_eq!(recovery_http_port_from(Some("0"), None), 8080);
+    }
+
+    #[test]
+    fn delta_chat_from_env_overlays_ports() {
+        let dc = delta_chat_from_get(|k| match k {
+            "STALWART_DC_IMAP_PORT" => Some("1993".into()),
+            "STALWART_DC_IC" => Some("1".into()),
+            "STALWART_DC_IMAP_HOST" => Some("mail.example.org".into()),
+            _ => None,
+        });
+        assert_eq!(dc.imap_port, 1993u64);
+        assert_eq!(dc.certificate_checks, "1");
+        assert_eq!(dc.imap_host, "mail.example.org");
+        assert_eq!(dc.smtp_port, 465u64);
+    }
+
+    #[test]
+    fn delta_chat_from_env_rejects_bad_security() {
+        let dc = delta_chat_from_get(|k| match k {
+            "STALWART_DC_IMAP_SECURITY" => Some("bogus".into()),
+            "STALWART_DC_IC" => Some("9".into()),
+            _ => None,
+        });
+        assert_eq!(dc.imap_security, "ssl");
+        assert_eq!(dc.certificate_checks, "3");
     }
 }
