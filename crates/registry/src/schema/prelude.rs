@@ -31,6 +31,14 @@ pub use crate::types::string::StringValidator;
 pub use serde::{Deserialize, Serialize};
 pub use std::borrow::Cow;
 pub use std::str::FromStr;
+
+pub fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
 pub use types::blob::BlobId;
 pub use types::id::Id;
 pub use utils::map::vec_map::VecMap;

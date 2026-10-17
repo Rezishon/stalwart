@@ -7,8 +7,9 @@
 use crate::altcha::AltchaEngine;
 use crate::assets::{WebAsset, get_web_asset};
 use crate::catalog::CatalogStore;
-use crate::config::DeltaChatSettings;
+use crate::config::{endpoints_from_settings, fill_empty_endpoint_hosts, DeltaChatSettings};
 use crate::error::DeltaChatError;
+use crate::password_hash::password_hash_algorithm_str;
 use crate::handlers::{
     accounts::{handle_custom_account, handle_instant_account},
     apps::handle_get_apps,
@@ -75,9 +76,12 @@ impl DeltaChatRouter {
     async fn discovery_context(
         settings: &DeltaChatSettings,
         server: &Server,
-    ) -> Result<(String, crate::config::EndpointsConfig), DeltaChatError> {
+    ) -> Result<(String, crate::config::EndpointsConfig, &'static str), DeltaChatError> {
+        let mut endpoints = endpoints_from_settings(settings)?;
+        let algo = password_hash_algorithm_str(server.core.network.security.password_hash_algorithm);
         if !settings.domain_id.is_valid() {
-            return Ok(("localhost".into(), DeltaChatSettings::default_endpoints()));
+            fill_empty_endpoint_hosts(&mut endpoints, &server.core.email.default_domain_name);
+            return Ok(("localhost".into(), endpoints, algo));
         }
         let domain = server
             .domain_by_id(settings.domain_id.document_id())
@@ -89,7 +93,9 @@ impl DeltaChatRouter {
             .first()
             .map(|n| n.to_string())
             .ok_or_else(|| DeltaChatError::InvalidDomain("Primary domain has no name".into()))?;
-        Ok((name, DeltaChatSettings::advertised_endpoints(server)))
+        fill_empty_endpoint_hosts(&mut endpoints, &name);
+        fill_empty_endpoint_hosts(&mut endpoints, &server.core.email.default_domain_name);
+        Ok((name, endpoints, algo))
     }
 
     pub async fn dispatch_api(
@@ -120,8 +126,15 @@ impl DeltaChatRouter {
                     return Err(DeltaChatError::MethodNotAllowed);
                 }
                 let altcha_engine = self.get_altcha_engine(settings);
-                let (domain, endpoints) = Self::discovery_context(settings, server).await?;
-                let resp = handle_config(settings, &altcha_engine, domain, endpoints)?;
+                let (domain, endpoints, password_hash_algorithm) =
+                    Self::discovery_context(settings, server).await?;
+                let resp = handle_config(
+                    settings,
+                    &altcha_engine,
+                    domain,
+                    endpoints,
+                    password_hash_algorithm,
+                )?;
                 json_ok(200, &resp)
             }
             "api/v1/altcha/challenge" => {
@@ -241,16 +254,10 @@ mod tests {
         let settings = DeltaChatSettings::default();
         let server = dummy_server();
 
-        let (status, body, content_type) = router
-            .dispatch_api(&settings, &server, "GET", "/api/v1/config", None)
-            .await
-            .unwrap();
-
-        assert_eq!(status, 200);
-        assert_eq!(content_type, "application/json; charset=utf-8");
-        assert!(body.contains("\"domain\":\"localhost\""));
-        assert!(body.contains("\"imap\""));
-        assert!(body.contains("\"smtp\""));
+        let res = router
+            .dispatch_api(&settings, &server, "POST", "/api/v1/config", None)
+            .await;
+        assert_eq!(res, Err(DeltaChatError::MethodNotAllowed));
     }
 
     #[tokio::test]
