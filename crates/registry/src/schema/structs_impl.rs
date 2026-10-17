@@ -47798,6 +47798,8 @@ impl ObjectImpl for DeltaChat {
             .instant_prefix
             .chars()
             .all(|c| matches!(c, 'a'..='z' | '0'..='9' | '.' | '_' | '-'))
+            || self.instant_prefix.starts_with('.')
+            || self.instant_prefix.ends_with('.')
         {
             errors.push(ValidationError::invalid(
                 Property::InstantPrefix,
@@ -47811,6 +47813,8 @@ impl ObjectImpl for DeltaChat {
             .custom_prefix
             .chars()
             .all(|c| matches!(c, 'a'..='z' | '0'..='9' | '.' | '_' | '-'))
+            || self.custom_prefix.starts_with('.')
+            || self.custom_prefix.ends_with('.')
         {
             errors.push(ValidationError::invalid(
                 Property::CustomPrefix,
@@ -47820,7 +47824,9 @@ impl ObjectImpl for DeltaChat {
         if self.instant_prefix_enabled
             && self.custom_prefix_enabled
             && !self.instant_prefix.is_empty()
-            && self.instant_prefix == self.custom_prefix
+            && !self.custom_prefix.is_empty()
+            && (self.custom_prefix.starts_with(&self.instant_prefix)
+                || self.instant_prefix.starts_with(&self.custom_prefix))
         {
             errors.push(ValidationError::invalid(
                 Property::CustomPrefix,
@@ -48192,6 +48198,28 @@ mod deltachat_pickle_tests {
         dc.validate(&mut errors);
         assert!(errors.contains(&ValidationError::invalid(Property::InstantPrefix, "Invalid#Prefix!")));
 
+        // Prefix boundary dot check
+        errors.clear();
+        dc.instant_prefix = ".dc_".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::InstantPrefix, ".dc_")));
+
+        errors.clear();
+        dc.instant_prefix = "dc_.".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::InstantPrefix, "dc_.")));
+
+        errors.clear();
+        dc.instant_prefix = "dc_".into();
+        dc.custom_prefix = ".usr_".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, ".usr_")));
+
+        errors.clear();
+        dc.custom_prefix = "usr_.".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, "usr_.")));
+
         // Prefix collision when both enabled
         errors.clear();
         dc.instant_prefix_enabled = true;
@@ -48200,6 +48228,19 @@ mod deltachat_pickle_tests {
         dc.custom_prefix = "test_".into();
         dc.validate(&mut errors);
         assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, "test_")));
+
+        // Sub-string prefix collision when both enabled
+        errors.clear();
+        dc.instant_prefix = "dc_".into();
+        dc.custom_prefix = "dc_vip_".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, "dc_vip_")));
+
+        errors.clear();
+        dc.instant_prefix = "dc_vip_".into();
+        dc.custom_prefix = "dc_".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, "dc_")));
 
         // Blacklist > 1000
         errors.clear();

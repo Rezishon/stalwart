@@ -120,7 +120,7 @@ impl Default for DeltaChatSettings {
             custom_prefix: String::new(),
             username_blacklist: registry::schema::structs_impl::DEFAULT_USERNAME_BLACKLIST
                 .iter()
-                .map(|s| s.to_string())
+                .map(|s| s.trim().to_ascii_lowercase())
                 .collect(),
         }
     }
@@ -225,7 +225,7 @@ impl From<registry::schema::structs::DeltaChat> for DeltaChatSettings {
                 .username_blacklist
                 .into_inner()
                 .into_iter()
-                .map(|s| s.to_ascii_lowercase())
+                .map(|s| s.trim().to_ascii_lowercase())
                 .collect(),
         }
     }
@@ -376,7 +376,7 @@ mod tests {
             instant_prefix: "custom_dc_".into(),
             custom_prefix_enabled: true,
             custom_prefix: "usr_".into(),
-            username_blacklist: registry::types::map::Map::new(vec!["BadUser".to_string()]),
+            username_blacklist: registry::types::map::Map::new(vec!["  BadUser  ".to_string()]),
             ..Default::default()
         };
 

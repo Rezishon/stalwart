@@ -21,7 +21,7 @@ use types::id::Id;
 pub fn matches_blacklist(username: &str, blacklist: &[String]) -> bool {
     let u = username.to_ascii_lowercase();
     blacklist.iter().any(|pattern| {
-        let pattern = pattern.trim().to_ascii_lowercase();
+        let pattern = pattern.trim();
         if pattern.is_empty() {
             return false;
         }
@@ -471,12 +471,14 @@ mod tests {
             "**".to_string(),
             "".to_string(),
             "   ".to_string(),
+            "  padded  ".to_string(),
         ];
         assert!(matches_blacklist("admin", &blacklist));
         assert!(matches_blacklist("ADMIN", &blacklist));
         assert!(matches_blacklist("tech-support-team", &blacklist));
         assert!(matches_blacklist("vip_123", &blacklist));
         assert!(matches_blacklist("test-bot", &blacklist));
+        assert!(matches_blacklist("padded", &blacklist));
         assert!(!matches_blacklist("alice", &blacklist));
         assert!(!matches_blacklist("normal_user", &blacklist));
     }
