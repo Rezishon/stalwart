@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+# Runtime image from a prebuilt musl binary (CI copies `stalwart` into the context).
+# Certs stage is BUILDPLATFORM so arm64 images do not qemu apk.
+FROM --platform=$BUILDPLATFORM alpine AS certs
+RUN apk add --no-cache ca-certificates
+
+FROM scratch
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --chmod=0755 stalwart /usr/local/bin/stalwart
+VOLUME ["/etc/stalwart", "/var/lib/stalwart"]
+EXPOSE 443 25 110 587 465 143 993 995 4190 8080
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENTRYPOINT ["/usr/local/bin/stalwart"]
+CMD ["--config", "/etc/stalwart/config.json"]
