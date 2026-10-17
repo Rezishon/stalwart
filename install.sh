@@ -207,29 +207,29 @@ resolve_paths() {
 }
 
 upsert_env() {
-    _file="$1"
-    _key="$2"
-    _value="$3"
-    if ! quote_env_value "$_value" >/dev/null; then
+    _ue_file="$1"
+    _ue_key="$2"
+    _ue_value="$3"
+    if ! quote_env_value "$_ue_value" >/dev/null; then
         return 1
     fi
     _out=$(mktemp)
     _found=0
     while IFS= read -r _line || [ -n "$_line" ]; do
         case "$_line" in
-            "${_key}="*|"#${_key}="*)
-                printf '%s=%s\n' "$_key" "'$_value'"
+            "${_ue_key}="*|"#${_ue_key}="*)
+                printf '%s=%s\n' "$_ue_key" "'$_ue_value'"
                 _found=1
                 ;;
             *)
                 printf '%s\n' "$_line"
                 ;;
         esac
-    done < "$_file" > "$_out"
+    done < "$_ue_file" > "$_out"
     if [ "$_found" -eq 0 ]; then
-        printf '%s=%s\n' "$_key" "'$_value'" >> "$_out"
+        printf '%s=%s\n' "$_ue_key" "'$_ue_value'" >> "$_out"
     fi
-    cat "$_out" > "$_file"
+    cat "$_out" > "$_ue_file"
     rm -f "$_out"
 }
 
@@ -305,11 +305,23 @@ is_yes() {
 }
 
 prompt_admin() {
+    _pa_keep=0
+    [ "${1:-}" = keep ] && _pa_keep=1
     while :; do
-        prompt_read "Admin bootstrap credential [username:password or 'random'] (Default: random): "
-        [ -n "$_prompt_ans" ] || _prompt_ans=random
+        if [ "$_pa_keep" -eq 1 ]; then
+            prompt_read "Admin bootstrap credential [username:password or 'random'] (Default: keep existing): "
+        else
+            prompt_read "Admin bootstrap credential [username:password or 'random'] (Default: random): "
+        fi
+        if [ -z "$_prompt_ans" ]; then
+            if [ "$_pa_keep" -eq 1 ]; then
+                _admin=
+                return 0
+            fi
+            _prompt_ans=random
+        fi
         if [ "$_prompt_ans" = random ]; then
-            _admin=
+            _admin=random
             return 0
         fi
         if contains_cr_lf_or_quote "$_prompt_ans"; then
@@ -377,22 +389,30 @@ apply_source() {
 }
 
 comment_env_key() {
-    _file="$1"
-    _key="$2"
-    [ -f "$_file" ] || return 0
+    _cek_file="$1"
+    _cek_key="$2"
+    [ -f "$_cek_file" ] || return 0
     _out=$(mktemp)
     while IFS= read -r _line || [ -n "$_line" ]; do
         case "$_line" in
-            "${_key}="*)
+            "${_cek_key}="*)
                 printf '#%s\n' "$_line"
                 ;;
             *)
                 printf '%s\n' "$_line"
                 ;;
         esac
-    done < "$_file" > "$_out"
-    cat "$_out" > "$_file"
+    done < "$_cek_file" > "$_out"
+    cat "$_out" > "$_cek_file"
     rm -f "$_out"
+}
+
+apply_mode2_admin() {
+    if [ -n "$_admin" ] && [ "$_admin" != random ]; then
+        upsert_env "$1" STALWART_RECOVERY_ADMIN "$_admin"
+    elif [ "$_admin" = random ]; then
+        comment_env_key "$1" STALWART_RECOVERY_ADMIN
+    fi
 }
 
 read_env_key() {
@@ -832,7 +852,7 @@ main() {
                 set_public_url_default
                 prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
                     "Public base URL"
-                prompt_admin
+                prompt_admin keep
             else
                 _used_ports=
                 for _spec in \
@@ -916,11 +936,7 @@ main() {
             fi
             upsert_env "$_env_file" STALWART_HOSTNAME "$_hostname"
             upsert_env "$_env_file" STALWART_PUBLIC_URL "$_public_url"
-            if [ -n "$_admin" ] && [ "$_admin" != random ]; then
-                upsert_env "$_env_file" STALWART_RECOVERY_ADMIN "$_admin"
-            else
-                comment_env_key "$_env_file" STALWART_RECOVERY_ADMIN
-            fi
+            apply_mode2_admin "$_env_file"
             ;;
         *)
             say "Writing env file at ${_env_file}..."
@@ -953,31 +969,41 @@ main() {
             ;;
     esac
 
-    _recovery_port="$(recovery_port "$_env_file")"
     say ""
     say "Installation complete!"
     say ""
-    say "Stalwart is running in bootstrap mode. A temporary administrator"
-    say "password was generated at startup and printed to the service logs."
-    say ""
-    say "To find the password, inspect the service logs:"
-    case "$_service_type" in
-        systemd)
-            say "     journalctl -u stalwart -n 200 | grep -A8 'bootstrap mode'"
+    case "$_install_mode" in
+        1)
+            say "Binary updated. Existing config, env, and database were left unchanged."
             ;;
-        initd)
-            say "     grep -A8 'bootstrap mode' /var/log/syslog 2>/dev/null \\"
-            say "       || grep -A8 'bootstrap mode' /var/log/messages"
+        2)
+            say "Environment updated at ${_env_file}."
             ;;
-        rcd)
-            say "     grep -A8 'bootstrap mode' ${_log_dir}/stalwart.log"
+        *)
+            _recovery_port="$(recovery_port "$_env_file")"
+            say "Stalwart is running in bootstrap mode. A temporary administrator"
+            say "password was generated at startup and printed to the service logs."
+            say ""
+            say "To find the password, inspect the service logs:"
+            case "$_service_type" in
+                systemd)
+                    say "     journalctl -u stalwart -n 200 | grep -A8 'bootstrap mode'"
+                    ;;
+                initd)
+                    say "     grep -A8 'bootstrap mode' /var/log/syslog 2>/dev/null \\"
+                    say "       || grep -A8 'bootstrap mode' /var/log/messages"
+                    ;;
+                rcd)
+                    say "     grep -A8 'bootstrap mode' ${_log_dir}/stalwart.log"
+                    ;;
+            esac
+            say ""
+            say "   Or set STALWART_RECOVERY_ADMIN=admin:<password> in"
+            say "   ${_env_file} and restart the service to pin a credential."
+            say ""
+            say "   Finish setup at: http://${_hostname}:${_recovery_port}/admin"
             ;;
     esac
-    say ""
-    say "   Or set STALWART_RECOVERY_ADMIN=admin:<password> in"
-    say "   ${_env_file} and restart the service to pin a credential."
-    say ""
-    say "   Finish setup at: http://${_hostname}:${_recovery_port}/admin"
     say ""
 
     return 0

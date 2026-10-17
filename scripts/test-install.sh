@@ -228,6 +228,26 @@ comment_env_key "$_tmp" STALWART_RECOVERY_ADMIN
 grep -q "^#STALWART_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail comment-admin
 grep -q "^STALWART_LISTEN_HTTPS='8443'$" "$_tmp" || fail comment-leave-listen
 
+_file=/opt/keep-me.tar.gz
+comment_env_key "$_tmp" STALWART_LISTEN_HTTPS
+[ "$_file" = /opt/keep-me.tar.gz ] || fail comment-clobber-file
+upsert_env "$_tmp" STALWART_HOSTNAME mail.example.org
+[ "$_file" = /opt/keep-me.tar.gz ] || fail upsert-clobber-file
+
+_admin=
+cat > "$_tmp" <<'EOF'
+STALWART_HOSTNAME='mail.example.org'
+STALWART_RECOVERY_ADMIN='admin:twelvecharsx'
+EOF
+apply_mode2_admin "$_tmp"
+grep -q "^STALWART_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail mode2-admin-keep
+_admin=random
+apply_mode2_admin "$_tmp"
+grep -q "^#STALWART_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail mode2-admin-random
+_admin='ops:twelvecharsx'
+apply_mode2_admin "$_tmp"
+grep -q "^STALWART_RECOVERY_ADMIN='ops:twelvecharsx'$" "$_tmp" || fail mode2-admin-set
+
 _file=
 _repo=
 apply_source 'https://example.com/dl/stalwart-x86_64-linux.tar.gz'
