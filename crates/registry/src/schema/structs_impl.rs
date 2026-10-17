@@ -47891,10 +47891,10 @@ impl RegistryJsonPropertyPatch for DeltaChat {
             Some(Property::AltchaRequired) => self.altcha_required.patch(pointer, value),
             Some(Property::AltchaMaxNumber) => self.altcha_max_number.patch(pointer, value),
             Some(Property::AltchaHmacSecret) => self.altcha_hmac_secret.patch(pointer, value),
-            Some(Property::ImapHost) => self.imap_host.patch(pointer, value),
+            Some(Property::ImapHost) => patch_empty_ok(&mut self.imap_host, pointer, value),
             Some(Property::ImapPort) => self.imap_port.patch(pointer, value),
             Some(Property::ImapSecurity) => self.imap_security.patch(pointer, value),
-            Some(Property::SmtpHost) => self.smtp_host.patch(pointer, value),
+            Some(Property::SmtpHost) => patch_empty_ok(&mut self.smtp_host, pointer, value),
             Some(Property::SmtpPort) => self.smtp_port.patch(pointer, value),
             Some(Property::SmtpSecurity) => self.smtp_security.patch(pointer, value),
             Some(Property::CertificateChecks) => self.certificate_checks.patch(pointer, value),
@@ -47905,4 +47905,20 @@ impl RegistryJsonPropertyPatch for DeltaChat {
             _ => Err(PatchError::new(pointer, "Invalid property")),
         }
     }
+}
+
+fn patch_empty_ok<'x>(
+    host: &mut String,
+    pointer: JsonPointerPatch<'_>,
+    value: JmapValue<'x>,
+) -> PatchResult<'x> {
+    if value.is_null() {
+        host.clear();
+        return pointer.assert_eof();
+    }
+    if let Some(s) = value.into_string() {
+        *host = s.into_owned();
+        return pointer.assert_eof();
+    }
+    Err(PatchError::new(pointer, "Invalid value for property."))
 }

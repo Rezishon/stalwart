@@ -321,4 +321,20 @@ mod tests {
         assert!(endpoints.imap.host.is_empty());
         assert!(endpoints.smtp.host.is_empty());
     }
+
+    #[test]
+    fn null_imap_host_does_not_require_smtp_host() {
+        let c: registry::schema::structs::DeltaChat =
+            serde_json::from_str(r#"{"imapHost":null,"smtpHost":"smtp.example.org"}"#).unwrap();
+        assert_eq!(c.imap_host, "");
+        assert_eq!(c.smtp_host, "smtp.example.org");
+    }
+
+    #[test]
+    fn null_smtp_host_does_not_require_imap_host() {
+        let c: registry::schema::structs::DeltaChat =
+            serde_json::from_str(r#"{"imapHost":"imap.example.org","smtpHost":null}"#).unwrap();
+        assert_eq!(c.imap_host, "imap.example.org");
+        assert_eq!(c.smtp_host, "");
+    }
 }
