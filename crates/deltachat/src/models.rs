@@ -122,6 +122,10 @@ pub struct ConfigDiscoveryResponse {
     pub altcha: ConfigDiscoveryAltcha,
     pub password_hash_algorithm: String,
     pub certificate_checks: String,
+    pub instant_prefix_enabled: bool,
+    pub instant_prefix: String,
+    pub custom_prefix_enabled: bool,
+    pub custom_prefix: String,
 }
 
 #[cfg(test)]

@@ -87,7 +87,11 @@ fn test_e2e_config_json_requires_hash_algorithm_and_certificate_checks() {
         },
         "altcha":{"required":false,"max_number":1000},
         "password_hash_algorithm":"scrypt",
-        "certificate_checks":"1"
+        "certificate_checks":"1",
+        "instant_prefix_enabled":false,
+        "instant_prefix":"",
+        "custom_prefix_enabled":false,
+        "custom_prefix":""
     }"#;
     let cfg: ConfigDiscoveryResponse =
         serde_json::from_str(json).expect("config JSON must include hash algorithm and ic");

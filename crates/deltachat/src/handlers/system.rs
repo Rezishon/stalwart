@@ -69,6 +69,10 @@ pub fn handle_config(
         },
         password_hash_algorithm: password_hash_algorithm.to_string(),
         certificate_checks: settings.certificate_checks.as_str().to_string(),
+        instant_prefix_enabled: settings.instant_prefix_enabled,
+        instant_prefix: settings.instant_prefix.clone(),
+        custom_prefix_enabled: settings.custom_prefix_enabled,
+        custom_prefix: settings.custom_prefix.clone(),
     })
 }
 
@@ -166,6 +170,30 @@ mod tests {
         assert_eq!(resp.password_hash_algorithm, "argon2id");
         assert_eq!(resp.certificate_checks, "1");
         assert_eq!(resp.endpoints.imap.host, "imap.example.org");
+    }
+
+    #[test]
+    fn config_includes_prefix_settings() {
+        let mut settings = DeltaChatSettings::default();
+        settings.instant_prefix_enabled = true;
+        settings.instant_prefix = "chat_".into();
+        settings.custom_prefix_enabled = true;
+        settings.custom_prefix = "user_".into();
+
+        let engine = AltchaEngine::new(b"secret".to_vec(), 1000);
+        let resp = handle_config(
+            &settings,
+            &engine,
+            "example.org".into(),
+            endpoints_from_settings(&settings).unwrap(),
+            "argon2id",
+        )
+        .unwrap();
+
+        assert!(resp.instant_prefix_enabled);
+        assert_eq!(resp.instant_prefix, "chat_");
+        assert!(resp.custom_prefix_enabled);
+        assert_eq!(resp.custom_prefix, "user_");
     }
 
     #[test]
