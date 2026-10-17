@@ -708,7 +708,8 @@ write_env_file() {
         printf '%s\n' '# Push-notification shard this node is responsible for, when running in a'
         printf '%s\n' '# cluster.'
         printf '%s\n' '#STALWART_PUSH_SHARD=1'
-    } > "$1"
+    } > "$1" || return 1
+    chmod 0640 "$1"
 }
 
 create_account() {

@@ -161,6 +161,8 @@ grep -q "^STALWART_TLS='true'$" "$_tmp" || fail env-tls
 grep -q "^STALWART_DC_IC='3'$" "$_tmp" || fail env-ic
 if grep -q '^STALWART_RECOVERY_MODE=' "$_tmp"; then fail no-recovery-mode; fi
 if grep -q '^STALWART_RECOVERY_ADMIN=' "$_tmp"; then fail no-admin-when-random; fi
+_mode=$(stat -c '%a' "$_tmp" 2>/dev/null || stat -f '%OLp' "$_tmp")
+[ "$_mode" = 640 ] || fail env-mode
 rm -f "$_tmp"
 ok write_env_file
 
