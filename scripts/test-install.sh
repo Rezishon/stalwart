@@ -166,4 +166,12 @@ _mode=$(stat -c '%a' "$_tmp" 2>/dev/null || stat -f '%OLp' "$_tmp")
 rm -f "$_tmp"
 ok write_env_file
 
+sh install.sh --help | grep -q -- '--imap-port' || fail help-imap
+
+# no TTY, no -y
+if sh install.sh --prefix /tmp/nope 2>/dev/null; then
+    fail 'piped install without -y should exit'
+fi
+ok tty-guard
+
 printf 'ALL PASSED\n'
