@@ -150,6 +150,18 @@ pub fn endpoints_from_settings(settings: &DeltaChatSettings) -> Result<Endpoints
     })
 }
 
+pub fn fill_empty_endpoint_hosts(endpoints: &mut EndpointsConfig, domain: &str) {
+    if domain.is_empty() {
+        return;
+    }
+    if endpoints.imap.host.is_empty() {
+        endpoints.imap.host = domain.to_string();
+    }
+    if endpoints.smtp.host.is_empty() {
+        endpoints.smtp.host = domain.to_string();
+    }
+}
+
 fn parse_security(s: &str) -> EndpointSecurity {
     match s {
         "starttls" => EndpointSecurity::Starttls,
@@ -230,5 +242,62 @@ mod tests {
         assert_eq!(CertificateChecks::Strict.as_str(), "1");
         assert_eq!(CertificateChecks::Automatic.as_str(), "0");
         assert_eq!(CertificateChecks::AcceptInvalid.as_str(), "3");
+    }
+
+    #[test]
+    fn empty_hosts_fill_from_primary_domain() {
+        let mut endpoints = EndpointsConfig {
+            imap: MailEndpointConfig {
+                host: String::new(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: String::new(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+        };
+        fill_empty_endpoint_hosts(&mut endpoints, "example.org");
+        assert_eq!(endpoints.imap.host, "example.org");
+        assert_eq!(endpoints.smtp.host, "example.org");
+    }
+
+    #[test]
+    fn saved_host_is_not_overwritten() {
+        let mut endpoints = EndpointsConfig {
+            imap: MailEndpointConfig {
+                host: "imap.custom".into(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: String::new(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+        };
+        fill_empty_endpoint_hosts(&mut endpoints, "example.org");
+        assert_eq!(endpoints.imap.host, "imap.custom");
+        assert_eq!(endpoints.smtp.host, "example.org");
+    }
+
+    #[test]
+    fn empty_domain_does_not_fill_hosts() {
+        let mut endpoints = EndpointsConfig {
+            imap: MailEndpointConfig {
+                host: String::new(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: "smtp.custom".into(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+        };
+        fill_empty_endpoint_hosts(&mut endpoints, "");
+        assert!(endpoints.imap.host.is_empty());
+        assert_eq!(endpoints.smtp.host, "smtp.custom");
     }
 }

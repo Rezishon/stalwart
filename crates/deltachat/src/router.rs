@@ -7,7 +7,7 @@
 use crate::altcha::AltchaEngine;
 use crate::assets::{WebAsset, get_web_asset};
 use crate::catalog::CatalogStore;
-use crate::config::{endpoints_from_settings, DeltaChatSettings};
+use crate::config::{endpoints_from_settings, fill_empty_endpoint_hosts, DeltaChatSettings};
 use crate::error::DeltaChatError;
 use crate::password_hash::password_hash_algorithm_str;
 use crate::handlers::{
@@ -77,7 +77,7 @@ impl DeltaChatRouter {
         settings: &DeltaChatSettings,
         server: &Server,
     ) -> Result<(String, crate::config::EndpointsConfig, &'static str), DeltaChatError> {
-        let endpoints = endpoints_from_settings(settings)?;
+        let mut endpoints = endpoints_from_settings(settings)?;
         let algo = password_hash_algorithm_str(server.core.network.security.password_hash_algorithm);
         if !settings.domain_id.is_valid() {
             return Ok(("localhost".into(), endpoints, algo));
@@ -92,6 +92,7 @@ impl DeltaChatRouter {
             .first()
             .map(|n| n.to_string())
             .ok_or_else(|| DeltaChatError::InvalidDomain("Primary domain has no name".into()))?;
+        fill_empty_endpoint_hosts(&mut endpoints, &name);
         Ok((name, endpoints, algo))
     }
 
