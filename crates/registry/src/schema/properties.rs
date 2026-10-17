@@ -1206,4 +1206,9 @@ pub enum Property {
     SmtpPort = 953,
     SmtpSecurity = 954,
     CertificateChecks = 955,
+    InstantPrefixEnabled = 956,
+    InstantPrefix = 957,
+    CustomPrefixEnabled = 958,
+    CustomPrefix = 959,
+    UsernameBlacklist = 960,
 }

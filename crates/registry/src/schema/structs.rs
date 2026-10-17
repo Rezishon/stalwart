@@ -6358,4 +6358,14 @@ pub struct DeltaChat {
     pub smtp_security: String,
     #[serde(rename = "certificateChecks")]
     pub certificate_checks: String,
+    #[serde(rename = "instantPrefixEnabled")]
+    pub instant_prefix_enabled: bool,
+    #[serde(rename = "instantPrefix", deserialize_with = "deserialize_null_default")]
+    pub instant_prefix: String,
+    #[serde(rename = "customPrefixEnabled")]
+    pub custom_prefix_enabled: bool,
+    #[serde(rename = "customPrefix", deserialize_with = "deserialize_null_default")]
+    pub custom_prefix: String,
+    #[serde(rename = "usernameBlacklist")]
+    pub username_blacklist: Map<String>,
 }
