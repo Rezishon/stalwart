@@ -360,12 +360,91 @@ apply_paths() {
     _env_file="${_conf_dir}/stalwart.env"
 }
 
+apply_source() {
+    case "$1" in
+        https://*)
+            _file=
+            _repo="$1"
+            ;;
+        *.tar.gz)
+            _file="$1"
+            ;;
+        *)
+            _file=
+            _repo="$1"
+            ;;
+    esac
+}
+
+comment_env_key() {
+    _file="$1"
+    _key="$2"
+    [ -f "$_file" ] || return 0
+    _out=$(mktemp)
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case "$_line" in
+            "${_key}="*)
+                printf '#%s\n' "$_line"
+                ;;
+            *)
+                printf '%s\n' "$_line"
+                ;;
+        esac
+    done < "$_file" > "$_out"
+    cat "$_out" > "$_file"
+    rm -f "$_out"
+}
+
+read_env_key() {
+    _rek_file="$1"
+    _rek_key="$2"
+    _rek_val=
+    [ -r "$_rek_file" ] || return 1
+    while IFS= read -r _rek_line || [ -n "$_rek_line" ]; do
+        case "$_rek_line" in
+            "${_rek_key}="*)
+                _rek_val="${_rek_line#*=}"
+                case "$_rek_val" in
+                    \'*\'|\"*\")
+                        _rek_val="${_rek_val#?}"
+                        _rek_val="${_rek_val%?}"
+                        ;;
+                esac
+                ;;
+        esac
+    done < "$_rek_file"
+    [ -n "$_rek_val" ] || return 1
+    printf '%s\n' "$_rek_val"
+}
+
 set_public_url_default() {
     if [ -z "$_public_url" ]; then
-        if [ "$_listen_https" != 443 ]; then
+        if [ "$_listen_https" != 443 ] && [ -n "$_listen_https" ]; then
             _public_url="https://${_hostname}:${_listen_https}"
         else
             _public_url="https://${_hostname}"
+        fi
+    fi
+}
+
+seed_mode2_from_env() {
+    _v=
+    if [ -z "${_hostname_arg:-}" ]; then
+        _v="$(read_env_key "$_env_file" STALWART_HOSTNAME)" || _v=
+        if [ -n "$_v" ] && validate_hostname "$_v"; then
+            _hostname="$_v"
+        fi
+    fi
+    if [ -z "${_public_url_arg:-}" ]; then
+        _v="$(read_env_key "$_env_file" STALWART_PUBLIC_URL)" || _v=
+        if [ -n "$_v" ] && validate_public_url "$_v"; then
+            _public_url="$_v"
+        else
+            _public_url=
+            _v="$(read_env_key "$_env_file" STALWART_LISTEN_HTTPS)" || _v=
+            if validate_port "$_v"; then
+                _listen_https="$_v"
+            fi
         fi
     fi
 }
@@ -436,13 +515,20 @@ install_binary() {
 }
 
 recovery_port() {
-    _rp="${STALWART_RECOVERY_MODE_PORT:-}"
-    if validate_port "$_rp" && [ "$_rp" != 0 ]; then
-        printf '%s\n' "$_rp"
-        return 0
-    fi
-    if validate_port "${_listen_http:-}" && [ "$_listen_http" != 0 ]; then
-        printf '%s\n' "$_listen_http"
+    _rp_file="${1:-}"
+    _rp=
+    if [ -n "$_rp_file" ]; then
+        _rp="$(read_env_key "$_rp_file" STALWART_RECOVERY_MODE_PORT)" || _rp=
+        if validate_port "$_rp" && [ "$_rp" != 0 ]; then
+            printf '%s\n' "$_rp"
+            return 0
+        fi
+        _rp="$(read_env_key "$_rp_file" STALWART_LISTEN_HTTP)" || _rp=
+        if validate_port "$_rp" && [ "$_rp" != 0 ]; then
+            printf '%s\n' "$_rp"
+            return 0
+        fi
+        printf '%s\n' 8080
         return 0
     fi
     printf '%s\n' 8080
@@ -455,6 +541,8 @@ main() {
     local _repo="Rezishon/stalwart" _version="latest" _file=""
     _hostname=""
     _public_url=""
+    _hostname_arg=""
+    _public_url_arg=""
     _listen_smtp=25
     _listen_submission=587
     _listen_submissions=465
@@ -653,6 +741,9 @@ main() {
         shift
     done
 
+    _hostname_arg="$_hostname"
+    _public_url_arg="$_public_url"
+
     if [ ! -t 0 ] && [ "$_yes" -eq 0 ] && [ "$_update" -eq 0 ]; then
         err "Non-interactive stdin requires -y or --update."
     fi
@@ -705,15 +796,7 @@ main() {
             _src_def="${_file:-$_repo}"
             prompt_value _src_ans "$_src_def" validate_source "Invalid download source." \
                 "Download source [GitHub repo, custom URL, or local file]"
-            case "$_src_ans" in
-                *.tar.gz)
-                    _file="$_src_ans"
-                    ;;
-                *)
-                    _file=
-                    _repo="$_src_ans"
-                    ;;
-            esac
+            apply_source "$_src_ans"
             if [ -z "$_file" ]; then
                 prompt_value _version "$_version" validate_version "Invalid version." "Release tag"
             fi
@@ -739,6 +822,9 @@ main() {
                 fi
                 apply_paths
                 prompt_value _account "$_account" validate_user "Invalid user." "System user account"
+            fi
+            if [ "$_install_mode" -eq 2 ]; then
+                seed_mode2_from_env
             fi
             prompt_value _hostname "$_hostname" validate_hostname "Invalid hostname." "Server hostname"
 
@@ -832,6 +918,8 @@ main() {
             upsert_env "$_env_file" STALWART_PUBLIC_URL "$_public_url"
             if [ -n "$_admin" ] && [ "$_admin" != random ]; then
                 upsert_env "$_env_file" STALWART_RECOVERY_ADMIN "$_admin"
+            else
+                comment_env_key "$_env_file" STALWART_RECOVERY_ADMIN
             fi
             ;;
         *)
@@ -865,7 +953,7 @@ main() {
             ;;
     esac
 
-    _recovery_port="$(recovery_port)"
+    _recovery_port="$(recovery_port "$_env_file")"
     say ""
     say "Installation complete!"
     say ""

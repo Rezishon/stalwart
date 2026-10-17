@@ -174,4 +174,71 @@ if sh install.sh --prefix /tmp/nope 2>/dev/null; then
 fi
 ok tty-guard
 
+# --- env-file helpers (mode 1/2) ---
+_tmp="$(mktemp)"
+cat > "$_tmp" <<'EOF'
+STALWART_HOSTNAME='mail.example.org'
+STALWART_PUBLIC_URL='https://mail.example.org:8443'
+STALWART_LISTEN_HTTPS='8443'
+STALWART_LISTEN_HTTP='18080'
+STALWART_RECOVERY_MODE_PORT='9090'
+STALWART_RECOVERY_ADMIN='admin:twelvecharsx'
+EOF
+[ "$(read_env_key "$_tmp" STALWART_HOSTNAME)" = mail.example.org ] || fail read-env-host
+[ "$(recovery_port "$_tmp")" = 9090 ] || fail recovery-from-env
+_tmp2="$(mktemp)"
+cat > "$_tmp2" <<'EOF'
+STALWART_LISTEN_HTTP='0'
+EOF
+[ "$(recovery_port "$_tmp2")" = 8080 ] || fail recovery-zero-http
+_tmp3="$(mktemp)"
+cat > "$_tmp3" <<'EOF'
+STALWART_LISTEN_HTTP='18080'
+EOF
+[ "$(recovery_port "$_tmp3")" = 18080 ] || fail recovery-listen-http
+[ "$(recovery_port /no/such/env)" = 8080 ] || fail recovery-missing
+
+_hostname_arg=
+_public_url_arg=
+_hostname=detected.local
+_public_url=
+_listen_https=443
+_env_file="$_tmp"
+seed_mode2_from_env
+[ "$_hostname" = mail.example.org ] || fail seed-hostname
+[ "$_public_url" = 'https://mail.example.org:8443' ] || fail seed-public-url
+
+_hostname_arg=
+_public_url_arg=
+_hostname=detected.local
+_public_url=
+_listen_https=443
+_tmp4="$(mktemp)"
+cat > "$_tmp4" <<'EOF'
+STALWART_HOSTNAME='mail.example.org'
+STALWART_LISTEN_HTTPS='8443'
+EOF
+_env_file="$_tmp4"
+seed_mode2_from_env
+[ "$_hostname" = mail.example.org ] || fail seed-host-only
+set_public_url_default
+[ "$_public_url" = 'https://mail.example.org:8443' ] || fail seed-url-from-https
+
+comment_env_key "$_tmp" STALWART_RECOVERY_ADMIN
+grep -q "^#STALWART_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail comment-admin
+grep -q "^STALWART_LISTEN_HTTPS='8443'$" "$_tmp" || fail comment-leave-listen
+
+_file=
+_repo=
+apply_source 'https://example.com/dl/stalwart-x86_64-linux.tar.gz'
+[ -z "$_file" ] || fail apply-https-file
+[ "$_repo" = 'https://example.com/dl/stalwart-x86_64-linux.tar.gz' ] || fail apply-https-repo
+apply_source /opt/stalwart.tar.gz
+[ "$_file" = /opt/stalwart.tar.gz ] || fail apply-local
+apply_source Rezishon/stalwart
+[ -z "$_file" ] || fail apply-repo-file
+[ "$_repo" = Rezishon/stalwart ] || fail apply-repo
+rm -f "$_tmp" "$_tmp2" "$_tmp3" "$_tmp4"
+ok env-helpers
+
 printf 'ALL PASSED\n'
