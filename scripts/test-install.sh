@@ -96,6 +96,9 @@ ok artifact_target
     "https://github.com/Rezishon/stalwart/releases/download/v0.16.25-rl1/stalwart-aarch64-linux.tar.gz" ] || fail url-tag
 [ "$(download_url https://example.com/dl latest x86_64-linux)" = \
     "https://example.com/dl/stalwart-x86_64-linux.tar.gz" ] || fail url-custom
+if download_url http://example.com/dl latest x86_64-linux >/dev/null 2>&1; then
+    fail url-http
+fi
 ok download_url
 
 # --- paths ---

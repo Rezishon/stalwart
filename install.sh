@@ -53,6 +53,12 @@ validate_prefix() {
         /*) ;;
         *) return 1 ;;
     esac
+    if contains_cr_lf_or_quote "$1"; then
+        return 1
+    fi
+    case "$1" in
+        *[!A-Za-z0-9/._-]*) return 1 ;;
+    esac
     case "$1" in
         /|/bin|/sbin|/lib|/usr|/dev|/proc|/sys) return 1 ;;
     esac
@@ -158,7 +164,8 @@ download_url() {
     _tag="$2"
     _target="$3"
     case "$_src" in
-        https://*|http://*)
+        http://*) return 1 ;;
+        https://*)
             printf '%s\n' "${_src%/}/stalwart-${_target}.tar.gz"
             ;;
         *)
@@ -174,6 +181,9 @@ download_url() {
 resolve_paths() {
     _prefix="$1"
     _os="$2"
+    if contains_cr_lf_or_quote "$_prefix"; then
+        return 1
+    fi
     if [ "$_prefix" = /usr/local ]; then
         _bin_dir=/usr/local/bin
         _log_dir=/var/log/stalwart
@@ -190,7 +200,11 @@ resolve_paths() {
         _log_dir="${_prefix}/logs"
         _data_dir="${_prefix}/data"
     fi
-    printf '_bin_dir=%s\n_conf_dir=%s\n_data_dir=%s\n_log_dir=%s\n' \
+    if contains_cr_lf_or_quote "$_bin_dir" || contains_cr_lf_or_quote "$_conf_dir" \
+        || contains_cr_lf_or_quote "$_data_dir" || contains_cr_lf_or_quote "$_log_dir"; then
+        return 1
+    fi
+    printf "_bin_dir='%s'\n_conf_dir='%s'\n_data_dir='%s'\n_log_dir='%s'\n" \
         "$_bin_dir" "$_conf_dir" "$_data_dir" "$_log_dir"
 }
 
