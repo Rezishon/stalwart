@@ -440,15 +440,9 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
         .await?
         == 0
     {
-        for (protocol, name, port, tls_implicit) in [
-            (NetworkListenerProtocol::Smtp, "smtp", 25, false),
-            (NetworkListenerProtocol::Smtp, "submissions", 465, true),
-            (NetworkListenerProtocol::Imap, "imaps", 993, true),
-            (NetworkListenerProtocol::Pop3, "pop3s", 995, true),
-            (NetworkListenerProtocol::ManageSieve, "sieve", 4190, false),
-            (NetworkListenerProtocol::Http, "https", 443, true),
-            (NetworkListenerProtocol::Http, "http", 8080, false),
-        ] {
+        let get = |k: &str| std::env::var(k).ok();
+        let use_tls = env_bool_from(get("STALWART_TLS").as_deref(), true);
+        for (protocol, name, port, tls_implicit) in default_listener_specs_from(get) {
             bp.registry
                 .write(RegistryWrite::insert(
                     &NetworkListener {
@@ -457,7 +451,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                         ]),
                         name: name.to_string(),
                         protocol,
-                        use_tls: true,
+                        use_tls,
                         tls_implicit,
                         ..Default::default()
                     }
@@ -575,6 +569,31 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
 }
 
 
+pub(crate) fn default_listener_specs_from(
+    get: impl Fn(&str) -> Option<String>,
+) -> Vec<(NetworkListenerProtocol, &'static str, u16, bool)> {
+    let use_tls = env_bool_from(get("STALWART_TLS").as_deref(), true);
+    const ROWS: &[(NetworkListenerProtocol, &str, &str, u16, bool)] = &[
+        (NetworkListenerProtocol::Smtp, "smtp", "STALWART_LISTEN_SMTP", 25, false),
+        (NetworkListenerProtocol::Smtp, "submission", "STALWART_LISTEN_SUBMISSION", 587, false),
+        (NetworkListenerProtocol::Smtp, "submissions", "STALWART_LISTEN_SUBMISSIONS", 465, true),
+        (NetworkListenerProtocol::Imap, "imaps", "STALWART_LISTEN_IMAP", 993, true),
+        (NetworkListenerProtocol::Pop3, "pop3s", "STALWART_LISTEN_POP3", 995, true),
+        (NetworkListenerProtocol::ManageSieve, "sieve", "STALWART_LISTEN_SIEVE", 4190, false),
+        (NetworkListenerProtocol::Http, "https", "STALWART_LISTEN_HTTPS", 443, true),
+        (NetworkListenerProtocol::Http, "http", "STALWART_LISTEN_HTTP", 8080, false),
+    ];
+    ROWS.iter()
+        .filter_map(|&(protocol, name, key, default, tls_implicit)| {
+            let port = env_u16_from(get(key).as_deref(), default);
+            if port == 0 {
+                return None;
+            }
+            Some((protocol, name, port, use_tls && tls_implicit))
+        })
+        .collect()
+}
+
 pub(crate) fn env_u16_from(raw: Option<&str>, default: u16) -> u16 {
     let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return default;
@@ -625,7 +644,7 @@ pub(crate) fn env_str(key: &str, default: &str) -> String {
 
 #[cfg(test)]
 mod env_parse_tests {
-    use super::{env_bool_from, env_str_from, env_u16_from};
+    use super::{default_listener_specs_from, env_bool_from, env_str_from, env_u16_from};
 
     #[test]
     fn env_u16_default_on_empty() {
@@ -649,5 +668,30 @@ mod env_parse_tests {
         assert!(env_bool_from(None, true));
         assert_eq!(env_str_from(Some(" mail.example "), "x"), "mail.example");
         assert_eq!(env_str_from(Some(""), "ssl"), "ssl");
+    }
+
+    #[test]
+    fn default_listeners_include_submission_587() {
+        let specs = default_listener_specs_from(|k| match k {
+            "STALWART_TLS" => Some("true".into()),
+            _ => None,
+        });
+        assert!(specs.iter().any(|s| s.1 == "submission" && s.2 == 587));
+        assert!(specs.iter().any(|s| s.1 == "submissions" && s.2 == 465));
+        assert_eq!(specs.len(), 8);
+    }
+
+    #[test]
+    fn default_listeners_skip_zero_and_honor_tls_off() {
+        let specs = default_listener_specs_from(|k| match k {
+            "STALWART_LISTEN_POP3" => Some("0".into()),
+            "STALWART_LISTEN_HTTP" => Some("9080".into()),
+            "STALWART_TLS" => Some("false".into()),
+            _ => None,
+        });
+        assert!(!specs.iter().any(|s| s.1 == "pop3s"));
+        let http = specs.iter().find(|s| s.1 == "http").unwrap();
+        assert_eq!(http.2, 9080);
+        assert!(specs.iter().all(|s| !s.3));
     }
 }
