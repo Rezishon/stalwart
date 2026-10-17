@@ -134,4 +134,34 @@ grep -q "^STALWART_PUBLIC_URL='https://mail.example.org'$" "$_tmp" || fail upser
 rm -f "$_tmp"
 ok upsert_env
 
+# --- write_env_file ---
+_tmp="$(mktemp)"
+_hostname=mail.example.org
+_public_url=https://mail.example.org
+_listen_smtp=25
+_listen_submission=587
+_listen_submissions=465
+_listen_imap=993
+_listen_pop3=995
+_listen_sieve=4190
+_listen_https=443
+_listen_http=8080
+_tls=true
+_dc_imap_host=mail.example.org
+_dc_imap_port=993
+_dc_imap_security=ssl
+_dc_smtp_host=mail.example.org
+_dc_smtp_port=465
+_dc_smtp_security=ssl
+_dc_ic=3
+_admin=
+write_env_file "$_tmp"
+grep -q "^STALWART_LISTEN_SUBMISSION='587'$" "$_tmp" || fail env-587
+grep -q "^STALWART_TLS='true'$" "$_tmp" || fail env-tls
+grep -q "^STALWART_DC_IC='3'$" "$_tmp" || fail env-ic
+if grep -q '^STALWART_RECOVERY_MODE=' "$_tmp"; then fail no-recovery-mode; fi
+if grep -q '^STALWART_RECOVERY_ADMIN=' "$_tmp"; then fail no-admin-when-random; fi
+rm -f "$_tmp"
+ok write_env_file
+
 printf 'ALL PASSED\n'
