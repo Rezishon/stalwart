@@ -372,9 +372,11 @@ mod tests {
 
     #[test]
     fn test_instant_username_with_configurable_prefix() {
-        let mut settings = DeltaChatSettings::default();
-        settings.instant_prefix_enabled = true;
-        settings.instant_prefix = "dc_".into();
+        let mut settings = DeltaChatSettings {
+            instant_prefix_enabled: true,
+            instant_prefix: "dc_".into(),
+            ..Default::default()
+        };
         assert!(validate_instant_username("dc_0123456789ab", &settings).is_ok());
         assert!(validate_instant_username("xx_0123456789ab", &settings).is_err());
         assert!(validate_instant_username("dc_short", &settings).is_err());
@@ -398,17 +400,19 @@ mod tests {
 
     #[test]
     fn test_custom_username_prefix_and_blacklist() {
-        let mut settings = DeltaChatSettings::default();
-        settings.instant_prefix_enabled = true;
-        settings.instant_prefix = "dc_".into();
-        settings.username_blacklist = vec![
-            "admin".into(),
-            "*support*".into(),
-            "vip_*".into(),
-            "*-bot".into(),
-            "*".into(), // degenerate wildcard: should be ignored safely
-            "".into(),  // empty: should be ignored safely
-        ];
+        let mut settings = DeltaChatSettings {
+            instant_prefix_enabled: true,
+            instant_prefix: "dc_".into(),
+            username_blacklist: vec![
+                "admin".into(),
+                "*support*".into(),
+                "vip_*".into(),
+                "*-bot".into(),
+                "*".into(), // degenerate wildcard: should be ignored safely
+                "".into(),  // empty: should be ignored safely
+            ],
+            ..Default::default()
+        };
 
         // Disallow instant prefix
         assert!(validate_username("dc_alex", &settings).is_err());

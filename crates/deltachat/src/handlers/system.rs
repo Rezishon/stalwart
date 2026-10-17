@@ -146,18 +146,20 @@ mod tests {
 
     #[test]
     fn config_includes_hash_algorithm_and_ic() {
-        let mut settings = DeltaChatSettings::default();
-        settings.imap = MailEndpointConfig {
-            host: "imap.example.org".into(),
-            port: 993,
-            security: EndpointSecurity::Ssl,
+        let settings = DeltaChatSettings {
+            imap: MailEndpointConfig {
+                host: "imap.example.org".into(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: "smtp.example.org".into(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+            certificate_checks: CertificateChecks::Strict,
+            ..Default::default()
         };
-        settings.smtp = MailEndpointConfig {
-            host: "smtp.example.org".into(),
-            port: 465,
-            security: EndpointSecurity::Ssl,
-        };
-        settings.certificate_checks = CertificateChecks::Strict;
         let engine = AltchaEngine::new(b"secret".to_vec(), 1000);
         let resp = handle_config(
             &settings,
@@ -174,11 +176,13 @@ mod tests {
 
     #[test]
     fn config_includes_prefix_settings() {
-        let mut settings = DeltaChatSettings::default();
-        settings.instant_prefix_enabled = true;
-        settings.instant_prefix = "chat_".into();
-        settings.custom_prefix_enabled = true;
-        settings.custom_prefix = "user_".into();
+        let settings = DeltaChatSettings {
+            instant_prefix_enabled: true,
+            instant_prefix: "chat_".into(),
+            custom_prefix_enabled: true,
+            custom_prefix: "user_".into(),
+            ..Default::default()
+        };
 
         let engine = AltchaEngine::new(b"secret".to_vec(), 1000);
         let resp = handle_config(

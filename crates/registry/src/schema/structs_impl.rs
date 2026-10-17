@@ -47912,6 +47912,150 @@ impl Pickle for DeltaChat {
     }
 }
 
+impl Default for DeltaChat {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            registration_open: true,
+            instant_accounts_enabled: true,
+            custom_accounts_enabled: true,
+            frontend_path: None,
+            domain_id: Default::default(),
+            allowed_domains: Default::default(),
+            altcha_required: false,
+            altcha_max_number: 100_000,
+            altcha_hmac_secret: String::new(),
+            imap_host: String::new(),
+            imap_port: 993,
+            imap_security: "ssl".into(),
+            smtp_host: String::new(),
+            smtp_port: 465,
+            smtp_security: "ssl".into(),
+            certificate_checks: "3".into(),
+            instant_prefix_enabled: true,
+            instant_prefix: "dc_".into(),
+            custom_prefix_enabled: false,
+            custom_prefix: String::new(),
+            username_blacklist: Map::new(
+                DEFAULT_USERNAME_BLACKLIST
+                    .iter()
+                    .map(|&s| s.to_string())
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl IntoValue for DeltaChat {
+    fn into_value(self) -> JmapValue<'static> {
+        let mut map = jmap_tools::Map::with_capacity(22);
+        map.insert_unchecked(Property::Enabled, self.enabled.into_value());
+        map.insert_unchecked(Property::RegistrationOpen, self.registration_open.into_value());
+        map.insert_unchecked(
+            Property::InstantAccountsEnabled,
+            self.instant_accounts_enabled.into_value(),
+        );
+        map.insert_unchecked(
+            Property::CustomAccountsEnabled,
+            self.custom_accounts_enabled.into_value(),
+        );
+        map.insert_unchecked(Property::FrontendPath, self.frontend_path.into_value());
+        map.insert_unchecked(Property::DomainId, self.domain_id.into_value());
+        map.insert_unchecked(Property::AllowedDomains, self.allowed_domains.into_value());
+        map.insert_unchecked(Property::AltchaRequired, self.altcha_required.into_value());
+        map.insert_unchecked(Property::AltchaMaxNumber, self.altcha_max_number.into_value());
+        map.insert_unchecked(Property::AltchaHmacSecret, self.altcha_hmac_secret.into_value());
+        map.insert_unchecked(Property::ImapHost, self.imap_host.into_value());
+        map.insert_unchecked(Property::ImapPort, self.imap_port.into_value());
+        map.insert_unchecked(Property::ImapSecurity, self.imap_security.into_value());
+        map.insert_unchecked(Property::SmtpHost, self.smtp_host.into_value());
+        map.insert_unchecked(Property::SmtpPort, self.smtp_port.into_value());
+        map.insert_unchecked(Property::SmtpSecurity, self.smtp_security.into_value());
+        map.insert_unchecked(Property::CertificateChecks, self.certificate_checks.into_value());
+        map.insert_unchecked(
+            Property::InstantPrefixEnabled,
+            self.instant_prefix_enabled.into_value(),
+        );
+        map.insert_unchecked(Property::InstantPrefix, self.instant_prefix.into_value());
+        map.insert_unchecked(
+            Property::CustomPrefixEnabled,
+            self.custom_prefix_enabled.into_value(),
+        );
+        map.insert_unchecked(Property::CustomPrefix, self.custom_prefix.into_value());
+        map.insert_unchecked(
+            Property::UsernameBlacklist,
+            self.username_blacklist.into_value(),
+        );
+        JmapValue::Object(map)
+    }
+}
+
+impl RegistryJsonPropertyPatch for DeltaChat {
+    fn patch_property<'x>(
+        &mut self,
+        mut pointer: JsonPointerPatch<'_>,
+        value: JmapValue<'x>,
+    ) -> PatchResult<'x> {
+        match pointer.next_property() {
+            Some(Property::Enabled) => self.enabled.patch(pointer, value),
+            Some(Property::RegistrationOpen) => self.registration_open.patch(pointer, value),
+            Some(Property::InstantAccountsEnabled) => {
+                self.instant_accounts_enabled.patch(pointer, value)
+            }
+            Some(Property::CustomAccountsEnabled) => {
+                self.custom_accounts_enabled.patch(pointer, value)
+            }
+            Some(Property::FrontendPath) => self.frontend_path.patch(pointer, value),
+            Some(Property::DomainId) => self.domain_id.patch(pointer, value),
+            Some(Property::AllowedDomains) => self.allowed_domains.patch(pointer, value),
+            Some(Property::AltchaRequired) => self.altcha_required.patch(pointer, value),
+            Some(Property::AltchaMaxNumber) => self.altcha_max_number.patch(pointer, value),
+            Some(Property::AltchaHmacSecret) => self.altcha_hmac_secret.patch(pointer, value),
+            Some(Property::ImapHost) => patch_empty_ok(&mut self.imap_host, pointer, value),
+            Some(Property::ImapPort) => self.imap_port.patch(pointer, value),
+            Some(Property::ImapSecurity) => self.imap_security.patch(pointer, value),
+            Some(Property::SmtpHost) => patch_empty_ok(&mut self.smtp_host, pointer, value),
+            Some(Property::SmtpPort) => self.smtp_port.patch(pointer, value),
+            Some(Property::SmtpSecurity) => self.smtp_security.patch(pointer, value),
+            Some(Property::CertificateChecks) => self.certificate_checks.patch(pointer, value),
+            Some(Property::InstantPrefixEnabled) => {
+                self.instant_prefix_enabled.patch(pointer, value)
+            }
+            Some(Property::InstantPrefix) => {
+                patch_empty_ok(&mut self.instant_prefix, pointer, value)
+            }
+            Some(Property::CustomPrefixEnabled) => {
+                self.custom_prefix_enabled.patch(pointer, value)
+            }
+            Some(Property::CustomPrefix) => {
+                patch_empty_ok(&mut self.custom_prefix, pointer, value)
+            }
+            Some(Property::UsernameBlacklist) => self.username_blacklist.patch(pointer, value),
+            Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
+                property: Property::Type,
+                value,
+            }),
+            _ => Err(PatchError::new(pointer, "Invalid property")),
+        }
+    }
+}
+
+fn patch_empty_ok<'x>(
+    host: &mut String,
+    pointer: JsonPointerPatch<'_>,
+    value: JmapValue<'x>,
+) -> PatchResult<'x> {
+    if value.is_null() {
+        host.clear();
+        return pointer.assert_eof();
+    }
+    if let Some(s) = value.into_string() {
+        *host = s.into_owned();
+        return pointer.assert_eof();
+    }
+    Err(PatchError::new(pointer, "Invalid value for property."))
+}
+
 #[cfg(test)]
 mod deltachat_pickle_tests {
     use super::*;
@@ -48085,148 +48229,4 @@ mod deltachat_pickle_tests {
         assert!(patch_res.is_ok());
         assert!(dc.custom_prefix_enabled);
     }
-}
-
-impl Default for DeltaChat {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            registration_open: true,
-            instant_accounts_enabled: true,
-            custom_accounts_enabled: true,
-            frontend_path: None,
-            domain_id: Default::default(),
-            allowed_domains: Default::default(),
-            altcha_required: false,
-            altcha_max_number: 100_000,
-            altcha_hmac_secret: String::new(),
-            imap_host: String::new(),
-            imap_port: 993,
-            imap_security: "ssl".into(),
-            smtp_host: String::new(),
-            smtp_port: 465,
-            smtp_security: "ssl".into(),
-            certificate_checks: "3".into(),
-            instant_prefix_enabled: true,
-            instant_prefix: "dc_".into(),
-            custom_prefix_enabled: false,
-            custom_prefix: String::new(),
-            username_blacklist: Map::new(
-                DEFAULT_USERNAME_BLACKLIST
-                    .iter()
-                    .map(|&s| s.to_string())
-                    .collect(),
-            ),
-        }
-    }
-}
-
-impl IntoValue for DeltaChat {
-    fn into_value(self) -> JmapValue<'static> {
-        let mut map = jmap_tools::Map::with_capacity(22);
-        map.insert_unchecked(Property::Enabled, self.enabled.into_value());
-        map.insert_unchecked(Property::RegistrationOpen, self.registration_open.into_value());
-        map.insert_unchecked(
-            Property::InstantAccountsEnabled,
-            self.instant_accounts_enabled.into_value(),
-        );
-        map.insert_unchecked(
-            Property::CustomAccountsEnabled,
-            self.custom_accounts_enabled.into_value(),
-        );
-        map.insert_unchecked(Property::FrontendPath, self.frontend_path.into_value());
-        map.insert_unchecked(Property::DomainId, self.domain_id.into_value());
-        map.insert_unchecked(Property::AllowedDomains, self.allowed_domains.into_value());
-        map.insert_unchecked(Property::AltchaRequired, self.altcha_required.into_value());
-        map.insert_unchecked(Property::AltchaMaxNumber, self.altcha_max_number.into_value());
-        map.insert_unchecked(Property::AltchaHmacSecret, self.altcha_hmac_secret.into_value());
-        map.insert_unchecked(Property::ImapHost, self.imap_host.into_value());
-        map.insert_unchecked(Property::ImapPort, self.imap_port.into_value());
-        map.insert_unchecked(Property::ImapSecurity, self.imap_security.into_value());
-        map.insert_unchecked(Property::SmtpHost, self.smtp_host.into_value());
-        map.insert_unchecked(Property::SmtpPort, self.smtp_port.into_value());
-        map.insert_unchecked(Property::SmtpSecurity, self.smtp_security.into_value());
-        map.insert_unchecked(Property::CertificateChecks, self.certificate_checks.into_value());
-        map.insert_unchecked(
-            Property::InstantPrefixEnabled,
-            self.instant_prefix_enabled.into_value(),
-        );
-        map.insert_unchecked(Property::InstantPrefix, self.instant_prefix.into_value());
-        map.insert_unchecked(
-            Property::CustomPrefixEnabled,
-            self.custom_prefix_enabled.into_value(),
-        );
-        map.insert_unchecked(Property::CustomPrefix, self.custom_prefix.into_value());
-        map.insert_unchecked(
-            Property::UsernameBlacklist,
-            self.username_blacklist.into_value(),
-        );
-        JmapValue::Object(map)
-    }
-}
-
-impl RegistryJsonPropertyPatch for DeltaChat {
-    fn patch_property<'x>(
-        &mut self,
-        mut pointer: JsonPointerPatch<'_>,
-        value: JmapValue<'x>,
-    ) -> PatchResult<'x> {
-        match pointer.next_property() {
-            Some(Property::Enabled) => self.enabled.patch(pointer, value),
-            Some(Property::RegistrationOpen) => self.registration_open.patch(pointer, value),
-            Some(Property::InstantAccountsEnabled) => {
-                self.instant_accounts_enabled.patch(pointer, value)
-            }
-            Some(Property::CustomAccountsEnabled) => {
-                self.custom_accounts_enabled.patch(pointer, value)
-            }
-            Some(Property::FrontendPath) => self.frontend_path.patch(pointer, value),
-            Some(Property::DomainId) => self.domain_id.patch(pointer, value),
-            Some(Property::AllowedDomains) => self.allowed_domains.patch(pointer, value),
-            Some(Property::AltchaRequired) => self.altcha_required.patch(pointer, value),
-            Some(Property::AltchaMaxNumber) => self.altcha_max_number.patch(pointer, value),
-            Some(Property::AltchaHmacSecret) => self.altcha_hmac_secret.patch(pointer, value),
-            Some(Property::ImapHost) => patch_empty_ok(&mut self.imap_host, pointer, value),
-            Some(Property::ImapPort) => self.imap_port.patch(pointer, value),
-            Some(Property::ImapSecurity) => self.imap_security.patch(pointer, value),
-            Some(Property::SmtpHost) => patch_empty_ok(&mut self.smtp_host, pointer, value),
-            Some(Property::SmtpPort) => self.smtp_port.patch(pointer, value),
-            Some(Property::SmtpSecurity) => self.smtp_security.patch(pointer, value),
-            Some(Property::CertificateChecks) => self.certificate_checks.patch(pointer, value),
-            Some(Property::InstantPrefixEnabled) => {
-                self.instant_prefix_enabled.patch(pointer, value)
-            }
-            Some(Property::InstantPrefix) => {
-                patch_empty_ok(&mut self.instant_prefix, pointer, value)
-            }
-            Some(Property::CustomPrefixEnabled) => {
-                self.custom_prefix_enabled.patch(pointer, value)
-            }
-            Some(Property::CustomPrefix) => {
-                patch_empty_ok(&mut self.custom_prefix, pointer, value)
-            }
-            Some(Property::UsernameBlacklist) => self.username_blacklist.patch(pointer, value),
-            Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
-                property: Property::Type,
-                value,
-            }),
-            _ => Err(PatchError::new(pointer, "Invalid property")),
-        }
-    }
-}
-
-fn patch_empty_ok<'x>(
-    host: &mut String,
-    pointer: JsonPointerPatch<'_>,
-    value: JmapValue<'x>,
-) -> PatchResult<'x> {
-    if value.is_null() {
-        host.clear();
-        return pointer.assert_eof();
-    }
-    if let Some(s) = value.into_string() {
-        *host = s.into_owned();
-        return pointer.assert_eof();
-    }
-    Err(PatchError::new(pointer, "Invalid value for property."))
 }

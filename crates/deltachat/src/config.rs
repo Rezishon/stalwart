@@ -371,12 +371,14 @@ mod tests {
 
     #[test]
     fn test_settings_from_registry_prefixes_and_blacklist() {
-        let mut reg = registry::schema::structs::DeltaChat::default();
-        reg.instant_prefix_enabled = true;
-        reg.instant_prefix = "custom_dc_".into();
-        reg.custom_prefix_enabled = true;
-        reg.custom_prefix = "usr_".into();
-        reg.username_blacklist = registry::types::map::Map::new(vec!["BadUser".to_string()]);
+        let reg = registry::schema::structs::DeltaChat {
+            instant_prefix_enabled: true,
+            instant_prefix: "custom_dc_".into(),
+            custom_prefix_enabled: true,
+            custom_prefix: "usr_".into(),
+            username_blacklist: registry::types::map::Map::new(vec!["BadUser".to_string()]),
+            ..Default::default()
+        };
 
         let settings = DeltaChatSettings::from(reg);
         assert!(settings.instant_prefix_enabled);
