@@ -716,6 +716,9 @@ impl ParseHttp for Server {
             }
             external => {
                 let is_leaf = path.next().is_none();
+                if external.is_empty() && !is_leaf {
+                    return Err(trc::ResourceEvent::NotFound.into_err());
+                }
                 if is_leaf {
                     if !external.is_empty() && !external.contains('.') {
                         return Ok(HttpResponse::redirect(format!("/{external}/")));
@@ -745,6 +748,22 @@ impl ParseHttp for Server {
                             response.with_no_cache()
                         });
                     }
+                }
+
+                if !matches!(external, "admin" | "account")
+                    && let Some(resource) = self
+                        .inner
+                        .data
+                        .applications
+                        .serve("", req.uri().path().trim_start_matches('/'))
+                        .await?
+                {
+                    let response = resource.resource.into_http_response();
+                    return Ok(if !resource.no_cache {
+                        response.with_immutable_cache()
+                    } else {
+                        response.with_no_cache()
+                    });
                 }
 
                 if let Some(asset) = deltachat::dispatch_web_asset(req.uri().path()) {

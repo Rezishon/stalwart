@@ -1678,11 +1678,7 @@ impl ObjectImpl for Application {
             errors.push(ValidationError::required(Property::ResourceUrl));
         }
         let value = &self.url_prefix;
-        for value in value.iter() {
-            if value.is_empty() {
-                errors.push(ValidationError::required(Property::UrlPrefix));
-            }
-        }
+        // ponytail: empty prefix is `/` (catch-all over embedded relay)
         if value.len() < 1 {
             errors.push(ValidationError::min_items(Property::UrlPrefix, 1));
         }

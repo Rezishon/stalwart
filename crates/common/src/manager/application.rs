@@ -471,6 +471,7 @@ impl Default for WebApplications {
 pub fn rewrite_index(html: &str, prefix: &str, oauth_client_id_meta: Option<&str>) -> Vec<u8> {
     let mut edits = [
         html.find(BASE_HREF)
+            .filter(|_| !prefix.is_empty())
             .map(|at| (at, BASE_HREF.len(), IndexEdit::BaseHref(prefix))),
         oauth_client_id_meta.and_then(|meta| {
             html.find(OAUTH_CLIENT_ID)
@@ -553,6 +554,13 @@ mod tests {
             html.contains("<meta name=\"oauth-client-id\" content=\"\" />"),
             "{html}"
         );
+    }
+
+    #[test]
+    fn empty_prefix_keeps_root_base_href() {
+        let html = String::from_utf8(rewrite_index(INDEX, "", None)).unwrap();
+        assert!(html.contains("<base href=\"/\" />"), "{html}");
+        assert!(!html.contains("<base href=\"//\""), "{html}");
     }
 
     #[test]
@@ -676,6 +684,37 @@ mod tests {
         assert!(!served.no_cache);
 
         assert!(apps.serve("unknown", "index.html").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn empty_prefix_serves_as_root_catch_all() {
+        let dir = TempDir::new(std::env::temp_dir().join("stalwart-app-root"));
+        dir.create().await.unwrap();
+        tokio::fs::write(dir.path.join("index.html"), INDEX)
+            .await
+            .unwrap();
+
+        let mut resources = AHashMap::new();
+        resources.insert(
+            "index.html".to_string(),
+            Resource::new("text/html", dir.path.join("index.html")),
+        );
+        let routes = Arc::new(AppRoutes {
+            resources,
+            oauth_client_id_meta: None,
+            _bundle_dir: dir,
+        });
+        let mut map = AHashMap::new();
+        map.insert(String::new(), routes);
+        let apps = WebApplications::new();
+        apps.routes.store(Arc::new(map));
+
+        let html = serve_html(&apps, "", "").await;
+        assert!(html.contains("<base href=\"/\" />"), "{html}");
+        assert!(!html.contains("<base href=\"//\""), "{html}");
+
+        let html = serve_html(&apps, "", "apps/custom").await;
+        assert!(html.contains("<base href=\"/\" />"), "{html}");
     }
 
     #[tokio::test]
