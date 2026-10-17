@@ -69,10 +69,7 @@ impl Listeners {
                         bind: Map::new(vec![
                             SocketAddr::from_str(&format!(
                                 "[::]:{}",
-                                std::env::var("STALWART_RECOVERY_MODE_PORT")
-                                    .ok()
-                                    .and_then(|p| p.parse::<u16>().ok())
-                                    .unwrap_or(8080)
+                                crate::manager::defaults::recovery_http_port()
                             ))
                             .unwrap(),
                         ]),

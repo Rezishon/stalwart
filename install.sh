@@ -12,46 +12,740 @@
 set -e
 set -u
 
-readonly BASE_URL="https://github.com/stalwartlabs/stalwart/releases/latest/download"
+contains_cr_lf_or_quote() {
+    case "$1" in *\'*) return 0 ;; esac
+    _stripped=$(printf '%s' "$1" | tr -d '\n\r')
+    [ "$1" != "$_stripped" ]
+}
+
+quote_env_value() {
+    if contains_cr_lf_or_quote "$1"; then
+        return 1
+    fi
+    printf "'%s'\n" "$1"
+}
+
+validate_source() {
+    [ -n "$1" ] || return 1
+    case "$1" in
+        http://*) return 1 ;;
+        https://*) return 0 ;;
+        *.tar.gz)
+            [ -r "$1" ] || return 1
+            return 0
+            ;;
+    esac
+    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+}
+
+validate_version() {
+    if [ "$1" = latest ]; then
+        return 0
+    fi
+    [ -n "$1" ] || return 1
+    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._-]+$'
+}
+
+validate_prefix() {
+    case "$1" in
+        /*) ;;
+        *) return 1 ;;
+    esac
+    if contains_cr_lf_or_quote "$1"; then
+        return 1
+    fi
+    case "$1" in
+        *[!A-Za-z0-9/._-]*) return 1 ;;
+    esac
+    case "$1" in
+        /|/bin|/sbin|/lib|/usr|/dev|/proc|/sys) return 1 ;;
+    esac
+    return 0
+}
+
+validate_user() {
+    [ "${#1}" -ge 1 ] && [ "${#1}" -le 32 ] || return 1
+    printf '%s' "$1" | grep -Eq '^[a-z_][a-z0-9_-]*$'
+}
+
+validate_hostname() {
+    [ -n "$1" ] || return 1
+    case "$1" in
+        *[!A-Za-z0-9.-]*|-*|*-|.*|*.|*..*) return 1 ;;
+    esac
+    return 0
+}
+
+validate_public_url() {
+    case "$1" in
+        https://?*|http://?*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_admin() {
+    if [ "$1" = random ]; then
+        return 0
+    fi
+    if contains_cr_lf_or_quote "$1"; then
+        return 1
+    fi
+    case "$1" in
+        *:*) ;;
+        *) return 1 ;;
+    esac
+    _user="${1%%:*}"
+    _pass="${1#*:}"
+    [ -n "$_user" ] || return 1
+    printf '%s' "$_user" | grep -Eq '^[A-Za-z0-9_-]+$' || return 1
+    [ "${#_pass}" -ge 12 ]
+}
+
+validate_mode() {
+    case "$1" in
+        1|2|3) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_yes_no() {
+    case "$1" in
+        [Yy]|[Yy][Ee][Ss]|[Nn]|[Nn][Oo]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_port() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -ge 0 ] && [ "$1" -le 65535 ]
+}
+
+validate_dc_security() {
+    case "$1" in
+        ssl|starttls|default|plain) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_dc_ic() {
+    case "$1" in
+        0|1|3) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+artifact_target() {
+    case "$1" in
+        Darwin) return 1 ;;
+        Linux)
+            case "$2" in
+                x86_64) printf '%s\n' x86_64-linux ;;
+                aarch64|arm64) printf '%s\n' aarch64-linux ;;
+                armv7l|armv7) printf '%s\n' armv7-linux ;;
+                *) return 1 ;;
+            esac
+            ;;
+        FreeBSD)
+            case "$2" in
+                amd64|x86_64) printf '%s\n' x86_64-freebsd ;;
+                *) return 1 ;;
+            esac
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+download_url() {
+    _src="$1"
+    _tag="$2"
+    _target="$3"
+    case "$_src" in
+        http://*) return 1 ;;
+        https://*)
+            printf '%s\n' "${_src%/}/stalwart-${_target}.tar.gz"
+            ;;
+        *)
+            if [ "$_tag" = latest ]; then
+                printf '%s\n' "https://github.com/${_src}/releases/latest/download/stalwart-${_target}.tar.gz"
+            else
+                printf '%s\n' "https://github.com/${_src}/releases/download/${_tag}/stalwart-${_target}.tar.gz"
+            fi
+            ;;
+    esac
+}
+
+resolve_paths() {
+    _prefix="$1"
+    _os="$2"
+    if contains_cr_lf_or_quote "$_prefix"; then
+        return 1
+    fi
+    if [ "$_prefix" = /usr/local ]; then
+        _bin_dir=/usr/local/bin
+        _log_dir=/var/log/stalwart
+        if [ "$_os" = freebsd ]; then
+            _conf_dir=/usr/local/etc/stalwart
+            _data_dir=/var/db/stalwart
+        else
+            _conf_dir=/etc/stalwart
+            _data_dir=/var/lib/stalwart
+        fi
+    else
+        _bin_dir="${_prefix}/bin"
+        _conf_dir="${_prefix}/etc"
+        _log_dir="${_prefix}/logs"
+        _data_dir="${_prefix}/data"
+    fi
+    if contains_cr_lf_or_quote "$_bin_dir" || contains_cr_lf_or_quote "$_conf_dir" \
+        || contains_cr_lf_or_quote "$_data_dir" || contains_cr_lf_or_quote "$_log_dir"; then
+        return 1
+    fi
+    printf "_bin_dir='%s'\n_conf_dir='%s'\n_data_dir='%s'\n_log_dir='%s'\n" \
+        "$_bin_dir" "$_conf_dir" "$_data_dir" "$_log_dir"
+}
+
+upsert_env() {
+    _ue_file="$1"
+    _ue_key="$2"
+    _ue_value="$3"
+    if ! quote_env_value "$_ue_value" >/dev/null; then
+        return 1
+    fi
+    _out=$(mktemp)
+    _found=0
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case "$_line" in
+            "${_ue_key}="*|"#${_ue_key}="*)
+                printf '%s=%s\n' "$_ue_key" "'$_ue_value'"
+                _found=1
+                ;;
+            *)
+                printf '%s\n' "$_line"
+                ;;
+        esac
+    done < "$_ue_file" > "$_out"
+    if [ "$_found" -eq 0 ]; then
+        printf '%s=%s\n' "$_ue_key" "'$_ue_value'" >> "$_out"
+    fi
+    cat "$_out" > "$_ue_file"
+    rm -f "$_out"
+}
+
+prompt_read() {
+    printf '%s' "$1"
+    _prompt_ans=
+    read -r _prompt_ans || _prompt_ans=
+}
+
+prompt_value() {
+    _pv_var="$1"
+    _pv_def="$2"
+    _pv_fn="$3"
+    _pv_err="$4"
+    _pv_label="$5"
+    while :; do
+        prompt_read "${_pv_label} (Default: ${_pv_def}): "
+        [ -n "$_prompt_ans" ] || _prompt_ans="$_pv_def"
+        if "$_pv_fn" "$_prompt_ans"; then
+            eval "$_pv_var=\"\$_prompt_ans\""
+            return 0
+        fi
+        printf '%s\n' "$_pv_err"
+    done
+}
+
+prompt_port() {
+    _pp_var="$1"
+    _pp_def="$2"
+    _pp_label="$3"
+    _pp_nodup="${4:-}"
+    while :; do
+        prompt_read "${_pp_label} (Default: ${_pp_def}): "
+        [ -n "$_prompt_ans" ] || _prompt_ans="$_pp_def"
+        if ! validate_port "$_prompt_ans"; then
+            printf '%s\n' "Port must be an integer 0-65535."
+            continue
+        fi
+        if [ -z "$_pp_nodup" ] && [ "$_prompt_ans" != 0 ]; then
+            case " ${_used_ports} " in
+                *" ${_prompt_ans} "*)
+                    printf '%s\n' "Port already used."
+                    continue
+                    ;;
+            esac
+            _used_ports="${_used_ports} ${_prompt_ans}"
+        fi
+        eval "$_pp_var=\"\$_prompt_ans\""
+        return 0
+    done
+}
+
+prompt_yes_no() {
+    _pyn_var="$1"
+    _pyn_def="$2"
+    _pyn_label="$3"
+    while :; do
+        prompt_read "${_pyn_label} (Default: ${_pyn_def}): "
+        [ -n "$_prompt_ans" ] || _prompt_ans="$_pyn_def"
+        if validate_yes_no "$_prompt_ans"; then
+            eval "$_pyn_var=\"\$_prompt_ans\""
+            return 0
+        fi
+        printf '%s\n' "Enter y or n."
+    done
+}
+
+is_yes() {
+    case "$1" in
+        [Yy]|[Yy][Ee][Ss]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+prompt_admin() {
+    _pa_keep=0
+    [ "${1:-}" = keep ] && _pa_keep=1
+    while :; do
+        if [ "$_pa_keep" -eq 1 ]; then
+            prompt_read "Admin bootstrap credential [username:password or 'random'] (Default: keep existing): "
+        else
+            prompt_read "Admin bootstrap credential [username:password or 'random'] (Default: random): "
+        fi
+        if [ -z "$_prompt_ans" ]; then
+            if [ "$_pa_keep" -eq 1 ]; then
+                _admin=
+                return 0
+            fi
+            _prompt_ans=random
+        fi
+        if [ "$_prompt_ans" = random ]; then
+            _admin=random
+            return 0
+        fi
+        if contains_cr_lf_or_quote "$_prompt_ans"; then
+            printf '%s\n' "Credential must be username:password or 'random'."
+            continue
+        fi
+        case "$_prompt_ans" in
+            *:*) ;;
+            *)
+                printf '%s\n' "Credential must be username:password or 'random'."
+                continue
+                ;;
+        esac
+        _admin_user="${_prompt_ans%%:*}"
+        _admin_pass="${_prompt_ans#*:}"
+        if [ -z "$_admin_user" ] || ! printf '%s' "$_admin_user" | grep -Eq '^[A-Za-z0-9_-]+$'; then
+            printf '%s\n' "Username must be alphanumeric, underscore, or hyphen."
+            continue
+        fi
+        if [ "${#_admin_pass}" -lt 12 ]; then
+            printf '%s\n' "Password must be at least 12 characters."
+            continue
+        fi
+        _admin="$_prompt_ans"
+        return 0
+    done
+}
+
+prompt_mode() {
+    say "  1) Update binary only (preserves existing config, env, and database)"
+    say "  2) Reconfigure environment (re-prompts settings and updates stalwart.env)"
+    say "  3) Fresh install (overwrites binary and recreates stalwart.env)"
+    while :; do
+        prompt_read "Existing Stalwart installation detected. Choose action [1-3] (Default: 1): "
+        [ -n "$_prompt_ans" ] || _prompt_ans=1
+        if validate_mode "$_prompt_ans"; then
+            _install_mode="$_prompt_ans"
+            return 0
+        fi
+        printf '%s\n' "Choose 1, 2, or 3."
+    done
+}
+
+apply_paths() {
+    eval "$(resolve_paths "$_prefix" "$_os")" || err "Invalid prefix: $_prefix"
+    _bin_file="${_bin_dir}/stalwart"
+    _config_file="${_conf_dir}/config.json"
+    _env_file="${_conf_dir}/stalwart.env"
+}
+
+apply_source() {
+    case "$1" in
+        https://*)
+            _file=
+            _repo="$1"
+            ;;
+        *.tar.gz)
+            _file="$1"
+            ;;
+        *)
+            _file=
+            _repo="$1"
+            ;;
+    esac
+}
+
+comment_env_key() {
+    _cek_file="$1"
+    _cek_key="$2"
+    [ -f "$_cek_file" ] || return 0
+    _out=$(mktemp)
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case "$_line" in
+            "${_cek_key}="*)
+                printf '#%s\n' "$_line"
+                ;;
+            *)
+                printf '%s\n' "$_line"
+                ;;
+        esac
+    done < "$_cek_file" > "$_out"
+    cat "$_out" > "$_cek_file"
+    rm -f "$_out"
+}
+
+apply_mode2_admin() {
+    if [ -n "$_admin" ] && [ "$_admin" != random ]; then
+        upsert_env "$1" STALWART_RECOVERY_ADMIN "$_admin"
+    elif [ "$_admin" = random ]; then
+        comment_env_key "$1" STALWART_RECOVERY_ADMIN
+    fi
+}
+
+read_env_key() {
+    _rek_file="$1"
+    _rek_key="$2"
+    _rek_val=
+    [ -r "$_rek_file" ] || return 1
+    while IFS= read -r _rek_line || [ -n "$_rek_line" ]; do
+        case "$_rek_line" in
+            "${_rek_key}="*)
+                _rek_val="${_rek_line#*=}"
+                case "$_rek_val" in
+                    \'*\'|\"*\")
+                        _rek_val="${_rek_val#?}"
+                        _rek_val="${_rek_val%?}"
+                        ;;
+                esac
+                ;;
+        esac
+    done < "$_rek_file"
+    [ -n "$_rek_val" ] || return 1
+    printf '%s\n' "$_rek_val"
+}
+
+set_public_url_default() {
+    if [ -z "$_public_url" ]; then
+        if [ "$_listen_https" != 443 ] && [ -n "$_listen_https" ]; then
+            _public_url="https://${_hostname}:${_listen_https}"
+        else
+            _public_url="https://${_hostname}"
+        fi
+    fi
+}
+
+seed_mode2_from_env() {
+    _v=
+    if [ -z "${_hostname_arg:-}" ]; then
+        _v="$(read_env_key "$_env_file" STALWART_HOSTNAME)" || _v=
+        if [ -n "$_v" ] && validate_hostname "$_v"; then
+            _hostname="$_v"
+        fi
+    fi
+    if [ -z "${_public_url_arg:-}" ]; then
+        _v="$(read_env_key "$_env_file" STALWART_PUBLIC_URL)" || _v=
+        if [ -n "$_v" ] && validate_public_url "$_v"; then
+            _public_url="$_v"
+        else
+            _public_url=
+            _v="$(read_env_key "$_env_file" STALWART_LISTEN_HTTPS)" || _v=
+            if validate_port "$_v"; then
+                _listen_https="$_v"
+            fi
+        fi
+    fi
+}
+
+set_dc_defaults() {
+    [ -n "$_dc_imap_host" ] || _dc_imap_host="$_hostname"
+    [ -n "$_dc_smtp_host" ] || _dc_smtp_host="$_hostname"
+    [ -n "$_dc_imap_port" ] || _dc_imap_port="$_listen_imap"
+    [ -n "$_dc_smtp_port" ] || _dc_smtp_port="$_listen_submissions"
+}
+
+extract_stalwart() {
+    _tar="$1"
+    _outdir="$2"
+    _member=
+    _n_members=0
+    while IFS= read -r _n; do
+        [ -z "$_n" ] && continue
+        case "$_n" in
+            *..*|/*)
+                err "Archive contains an unsafe path."
+                ;;
+            stalwart|./stalwart)
+                _member="$_n"
+                _n_members=$((_n_members + 1))
+                ;;
+            *)
+                err "Archive must contain only stalwart."
+                ;;
+        esac
+    done <<EOF
+$(tar -t -f "$_tar")
+EOF
+    [ "$_n_members" -eq 1 ] && [ -n "$_member" ] || err "Archive must contain only stalwart."
+    ensure tar --no-same-owner -xf "$_tar" -C "$_outdir" "$_member"
+    _extracted="${_outdir}/stalwart"
+    [ -f "$_extracted" ] && [ ! -L "$_extracted" ] || err "Archive member must be a regular file named stalwart."
+}
+
+install_binary() {
+    _target="$1"
+    _tmp="$(mktemp -d)"
+    if [ -n "$_file" ]; then
+        _tar="$_file"
+    else
+        _tar="${_tmp}/stalwart.tar.gz"
+        _url="$(download_url "$_repo" "$_version" "$_target")" || err "Invalid download source."
+        say "Downloading stalwart for ${_target}..."
+        if ! downloader "$_url" "$_tar" "$_target"; then
+            rm -rf "$_tmp"
+            err "Download failed."
+        fi
+    fi
+    extract_stalwart "$_tar" "$_tmp"
+    if [ -e "$_bin_file" ]; then
+        ensure cp "$_bin_file" "${_bin_file}.bak"
+    fi
+    if ! cp "$_extracted" "$_bin_file"; then
+        if [ -f "${_bin_file}.bak" ]; then
+            mv "${_bin_file}.bak" "$_bin_file"
+        fi
+        rm -rf "$_tmp"
+        err "Failed to install binary."
+    fi
+    ensure chmod 0755 "$_bin_file"
+    ensure chown root:root "$_bin_file"
+    rm -rf "$_tmp"
+}
+
+recovery_port() {
+    _rp_file="${1:-}"
+    _rp=
+    if [ -n "$_rp_file" ]; then
+        _rp="$(read_env_key "$_rp_file" STALWART_RECOVERY_MODE_PORT)" || _rp=
+        if validate_port "$_rp" && [ "$_rp" != 0 ]; then
+            printf '%s\n' "$_rp"
+            return 0
+        fi
+        _rp="$(read_env_key "$_rp_file" STALWART_LISTEN_HTTP)" || _rp=
+        if validate_port "$_rp" && [ "$_rp" != 0 ]; then
+            printf '%s\n' "$_rp"
+            return 0
+        fi
+        printf '%s\n' 8080
+        return 0
+    fi
+    printf '%s\n' 8080
+}
 
 main() {
-    downloader --check
-    need_cmd uname
-    need_cmd mktemp
-    need_cmd chmod
-    need_cmd chown
-    need_cmd mkdir
-    need_cmd rm
-    need_cmd tar
-    need_cmd cp
-    need_cmd hostname
-
-    # Require root
-    if [ "$(id -u)" -ne 0 ]; then
-        err "❌ Install failed: This program needs to run as root."
-    fi
-
-    # Detect OS
-    local _os _uname _account
-    _uname="$(uname)"
-    case "$_uname" in
-        Linux)   _os="linux"; _account="stalwart" ;;
-        Darwin)  _os="macos"; _account="_stalwart" ;;
-        FreeBSD) _os="freebsd"; _account="stalwart" ;;
-        *)       err "❌ Install failed: Unsupported OS: $_uname" ;;
-    esac
-
-    # Parse arguments
-    local _component="stalwart"
+    local _os _uname _account=""
     local _prefix=""
+    local _yes=0 _update=0 _no_start=0
+    local _repo="Rezishon/stalwart" _version="latest" _file=""
+    _hostname=""
+    _public_url=""
+    _hostname_arg=""
+    _public_url_arg=""
+    _listen_smtp=25
+    _listen_submission=587
+    _listen_submissions=465
+    _listen_imap=993
+    _listen_pop3=995
+    _listen_sieve=4190
+    _listen_https=443
+    _listen_http=8080
+    _tls=true
+    _dc_imap_host=""
+    _dc_imap_port=""
+    _dc_imap_security=ssl
+    _dc_smtp_host=""
+    _dc_smtp_port=""
+    _dc_smtp_security=ssl
+    _dc_ic=3
+    _admin=
+
     while [ $# -gt 0 ]; do
         case "$1" in
-            --fdb)
-                _component="stalwart-foundationdb"
-                ;;
             -h|--help)
                 print_usage
                 exit 0
+                ;;
+            -y|--yes|--non-interactive)
+                _yes=1
+                ;;
+            -u|--update)
+                _update=1
+                ;;
+            --no-start)
+                _no_start=1
+                ;;
+            --tls)
+                _tls=true
+                ;;
+            --no-tls)
+                _tls=false
+                ;;
+            --repo)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_source "$2" || err "Invalid download source: $2"
+                _repo="$2"
+                shift
+                ;;
+            --version)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_version "$2" || err "Invalid version: $2"
+                _version="$2"
+                shift
+                ;;
+            --file)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_source "$2" || err "Invalid download source: $2"
+                _file="$2"
+                shift
+                ;;
+            --prefix)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_prefix "$2" || err "Invalid prefix: $2"
+                _prefix="$2"
+                shift
+                ;;
+            --user)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_user "$2" || err "Invalid user: $2"
+                _account="$2"
+                shift
+                ;;
+            --hostname)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                if contains_cr_lf_or_quote "$2" || ! validate_hostname "$2"; then
+                    err "Invalid hostname: $2"
+                fi
+                _hostname="$2"
+                shift
+                ;;
+            --public-url)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                if contains_cr_lf_or_quote "$2" || ! validate_public_url "$2"; then
+                    err "Invalid public URL: $2"
+                fi
+                _public_url="$2"
+                shift
+                ;;
+            --admin)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                apply_admin_flag "$2"
+                shift
+                ;;
+            --smtp-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _listen_smtp="$2"
+                shift
+                ;;
+            --submission-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _listen_submission="$2"
+                shift
+                ;;
+            --submissions-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _listen_submissions="$2"
+                shift
+                ;;
+            --imap-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _listen_imap="$2"
+                shift
+                ;;
+            --pop3-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _listen_pop3="$2"
+                shift
+                ;;
+            --sieve-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _listen_sieve="$2"
+                shift
+                ;;
+            --https-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _listen_https="$2"
+                shift
+                ;;
+            --http-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _listen_http="$2"
+                shift
+                ;;
+            --dc-imap-host)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                if contains_cr_lf_or_quote "$2" || ! validate_hostname "$2"; then
+                    err "Invalid hostname: $2"
+                fi
+                _dc_imap_host="$2"
+                shift
+                ;;
+            --dc-imap-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _dc_imap_port="$2"
+                shift
+                ;;
+            --dc-imap-security)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_dc_security "$2" || err "Invalid DeltaChat security: $2"
+                _dc_imap_security="$2"
+                shift
+                ;;
+            --dc-smtp-host)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                if contains_cr_lf_or_quote "$2" || ! validate_hostname "$2"; then
+                    err "Invalid hostname: $2"
+                fi
+                _dc_smtp_host="$2"
+                shift
+                ;;
+            --dc-smtp-port)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_port "$2" || err "Invalid port: $2"
+                _dc_smtp_port="$2"
+                shift
+                ;;
+            --dc-smtp-security)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_dc_security "$2" || err "Invalid DeltaChat security: $2"
+                _dc_smtp_security="$2"
+                shift
+                ;;
+            --dc-ic)
+                [ $# -ge 2 ] || err "❌ $1 requires a value"
+                validate_dc_ic "$2" || err "Invalid DeltaChat ic: $2"
+                _dc_ic="$2"
+                shift
                 ;;
             --*|-*)
                 err "❌ Unknown flag: $1 (try --help)"
@@ -60,77 +754,204 @@ main() {
                 if [ -n "$_prefix" ]; then
                     err "❌ Only one prefix argument is allowed, got: $_prefix $1"
                 fi
+                validate_prefix "$1" || err "Invalid prefix: $1"
                 _prefix="$1"
                 ;;
         esac
         shift
     done
 
-    # Derive install paths — FHS by default, self-contained under a custom prefix
-    local _bin_dir _bin_file _conf_dir _log_dir _data_dir _env_file _config_file
-    if [ -z "$_prefix" ]; then
-        _bin_dir="/usr/local/bin"
-        _log_dir="/var/log/stalwart"
-        if [ "$_os" = "freebsd" ]; then
-            # hier(7): third-party config lives under /usr/local/etc,
-            # variable data under /var/db
-            _conf_dir="/usr/local/etc/stalwart"
-            _data_dir="/var/db/stalwart"
+    _hostname_arg="$_hostname"
+    _public_url_arg="$_public_url"
+
+    if [ ! -t 0 ] && [ "$_yes" -eq 0 ] && [ "$_update" -eq 0 ]; then
+        err "Non-interactive stdin requires -y or --update."
+    fi
+    _interactive=0
+    if [ -t 0 ] && [ "$_yes" -eq 0 ] && [ "$_update" -eq 0 ]; then
+        _interactive=1
+    fi
+
+    need_cmd uname
+    need_cmd hostname
+    _uname="$(uname)"
+    case "$_uname" in
+        Linux)   _os="linux"; [ -n "$_account" ] || _account="stalwart" ;;
+        FreeBSD) _os="freebsd"; [ -n "$_account" ] || _account="stalwart" ;;
+        *)       err "❌ Install failed: Unsupported OS: $_uname" ;;
+    esac
+
+    downloader --check
+    need_cmd mktemp
+    need_cmd chmod
+    need_cmd chown
+    need_cmd mkdir
+    need_cmd rm
+    need_cmd tar
+    need_cmd cp
+
+    if [ "$(id -u)" -ne 0 ]; then
+        err "❌ Install failed: This program needs to run as root."
+    fi
+
+    [ -n "$_prefix" ] || _prefix=/usr/local
+    [ -n "$_hostname" ] || _hostname="$(hostname -f 2>/dev/null || hostname || printf '%s\n' mail.local)"
+    apply_paths
+
+    _target="$(artifact_target "$_uname" "$(uname -m)")" || err "❌ Install failed: Unsupported OS or architecture."
+
+    _install_mode=0
+    if [ "$_update" -eq 1 ]; then
+        _install_mode=1
+    elif [ -e "$_bin_file" ]; then
+        if [ "$_yes" -eq 1 ]; then
+            _install_mode=1
         else
-            _conf_dir="/etc/stalwart"
-            _data_dir="/var/lib/stalwart"
+            prompt_mode
+        fi
+    fi
+
+    if [ "$_interactive" -eq 1 ]; then
+        if [ "$_install_mode" -ne 2 ]; then
+            _src_def="${_file:-$_repo}"
+            prompt_value _src_ans "$_src_def" validate_source "Invalid download source." \
+                "Download source [GitHub repo, custom URL, or local file]"
+            apply_source "$_src_ans"
+            if [ -z "$_file" ]; then
+                prompt_value _version "$_version" validate_version "Invalid version." "Release tag"
+            fi
+        fi
+
+        if [ "$_install_mode" -ne 1 ]; then
+            if [ "$_install_mode" -ne 2 ]; then
+                if [ "$_prefix" = /usr/local ]; then
+                    _pfx_label="Installation prefix"
+                    _pfx_def="/usr/local [Standard FHS]"
+                    while :; do
+                        prompt_read "${_pfx_label} (Default: ${_pfx_def}): "
+                        [ -n "$_prompt_ans" ] || _prompt_ans=/usr/local
+                        if validate_prefix "$_prompt_ans"; then
+                            _prefix="$_prompt_ans"
+                            break
+                        fi
+                        printf '%s\n' "Invalid prefix."
+                    done
+                else
+                    prompt_value _prefix "$_prefix" validate_prefix "Invalid prefix." \
+                        "Installation prefix"
+                fi
+                apply_paths
+                prompt_value _account "$_account" validate_user "Invalid user." "System user account"
+            fi
+            if [ "$_install_mode" -eq 2 ]; then
+                seed_mode2_from_env
+            fi
+            prompt_value _hostname "$_hostname" validate_hostname "Invalid hostname." "Server hostname"
+
+            if [ "$_install_mode" -eq 2 ]; then
+                set_public_url_default
+                prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
+                    "Public base URL"
+                prompt_admin keep
+            else
+                _used_ports=
+                for _spec in \
+                    '_listen_smtp|SMTP port' \
+                    '_listen_submission|Submission port' \
+                    '_listen_submissions|Submissions (SMTPS) port' \
+                    '_listen_imap|IMAP port' \
+                    '_listen_pop3|POP3 port' \
+                    '_listen_sieve|ManageSieve port' \
+                    '_listen_https|HTTPS port' \
+                    '_listen_http|HTTP port'
+                do
+                    _pp_var="${_spec%%|*}"
+                    _pp_label="${_spec#*|}"
+                    eval "_pp_def=\$${_pp_var}"
+                    prompt_port "$_pp_var" "$_pp_def" "$_pp_label"
+                done
+
+                prompt_yes_no _tls_ans Y "Enable TLS on listeners? [Y/n]"
+                if is_yes "$_tls_ans"; then
+                    _tls=true
+                else
+                    _tls=false
+                fi
+
+                set_dc_defaults
+                prompt_value _dc_imap_host "$_dc_imap_host" validate_hostname "Invalid hostname." \
+                    "DeltaChat IMAP host"
+                prompt_port _dc_imap_port "$_dc_imap_port" "DeltaChat IMAP port" nodup
+                prompt_value _dc_imap_security "$_dc_imap_security" validate_dc_security \
+                    "Invalid DeltaChat security." "DeltaChat IMAP security [ssl/starttls/default/plain]"
+                prompt_value _dc_smtp_host "$_dc_smtp_host" validate_hostname "Invalid hostname." \
+                    "DeltaChat SMTP host"
+                prompt_port _dc_smtp_port "$_dc_smtp_port" "DeltaChat SMTP port" nodup
+                prompt_value _dc_smtp_security "$_dc_smtp_security" validate_dc_security \
+                    "Invalid DeltaChat security." "DeltaChat SMTP security [ssl/starttls/default/plain]"
+                prompt_value _dc_ic "$_dc_ic" validate_dc_ic "Invalid DeltaChat ic." \
+                    "DeltaChat certificate checks [0/1/3]"
+
+                set_public_url_default
+                prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
+                    "Public base URL"
+                prompt_admin
+            fi
+        fi
+
+        if [ "$_no_start" -eq 0 ]; then
+            prompt_yes_no _start_ans Y "Enable and start service now? [Y/n]"
+            if is_yes "$_start_ans"; then
+                _SKIP_START=0
+            else
+                _SKIP_START=1
+            fi
+        else
+            _SKIP_START=1
         fi
     else
-        _bin_dir="${_prefix}/bin"
-        _conf_dir="${_prefix}/etc"
-        _log_dir="${_prefix}/logs"
-        _data_dir="${_prefix}/data"
+        set_public_url_default
+        set_dc_defaults
+        if [ "$_no_start" -eq 1 ]; then
+            _SKIP_START=1
+        else
+            _SKIP_START=0
+        fi
     fi
-    _bin_file="${_bin_dir}/stalwart"
-    _config_file="${_conf_dir}/config.json"
-    _env_file="${_conf_dir}/stalwart.env"
 
-    # Detect architecture
-    get_architecture || return 1
-    local _arch="$RETVAL"
-    assert_nz "$_arch" "arch"
-
-    # Create service account
     create_account "$_os" "$_account"
-
-    # Create directories
     ensure mkdir -p "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir"
 
-    # Download and install the binary
-    say "⏳ Downloading ${_component} for ${_arch}..."
-    local _tmp _tar _src_name
-    _tmp="$(mktemp -d)"
-    _tar="${_tmp}/stalwart.tar.gz"
-    ensure downloader "${BASE_URL}/${_component}-${_arch}.tar.gz" "$_tar" "$_arch"
-    ensure tar zxf "$_tar" -C "$_tmp"
-    _src_name="stalwart"
-    if [ "$_component" = "stalwart-foundationdb" ]; then
-        _src_name="stalwart-foundationdb"
-    fi
-    ensure cp "${_tmp}/${_src_name}" "$_bin_file"
-    ensure chmod 0755 "$_bin_file"
-    ensure rm -rf "$_tmp"
-
-    # Create env file if absent (preserve user edits on reinstall)
-    if [ ! -e "$_env_file" ]; then
-        say "📝 Writing env file at ${_env_file}..."
-        write_env_file "$_env_file"
+    if [ "$_install_mode" -ne 2 ]; then
+        install_binary "$_target"
     fi
 
-    # Ownership and permissions
-    say "🔐 Setting permissions..."
+    case "$_install_mode" in
+        1)
+            ;;
+        2)
+            if [ ! -e "$_env_file" ]; then
+                : > "$_env_file"
+                chmod 0640 "$_env_file"
+            fi
+            upsert_env "$_env_file" STALWART_HOSTNAME "$_hostname"
+            upsert_env "$_env_file" STALWART_PUBLIC_URL "$_public_url"
+            apply_mode2_admin "$_env_file"
+            ;;
+        *)
+            say "Writing env file at ${_env_file}..."
+            write_env_file "$_env_file"
+            ;;
+    esac
+
+    say "Setting permissions..."
     ensure chown "${_account}:${_account}" "$_conf_dir" "$_log_dir" "$_data_dir"
     ensure chmod 0750 "$_conf_dir" "$_log_dir" "$_data_dir"
-    ensure chown "root:${_account}" "$_env_file"
-    ensure chmod 0640 "$_env_file"
+    if [ -e "$_env_file" ]; then
+        ensure chown "root:${_account}" "$_env_file"
+        ensure chmod 0640 "$_env_file"
+    fi
 
-    # Install and start the service
-    say "🚀 Starting service..."
     local _service_type=""
     case "$_os" in
         linux)
@@ -142,46 +963,47 @@ main() {
                 _service_type="initd"
             fi
             ;;
-        macos)
-            create_service_macos "$_bin_file" "$_config_file" "$_env_file" "$_account"
-            _service_type="launchd"
-            ;;
         freebsd)
             create_service_freebsd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
             _service_type="rcd"
             ;;
     esac
 
-    # Completion message
-    local _host
-    _host="$(hostname -f 2>/dev/null || hostname)"
     say ""
-    say "🎉 Installation complete!"
+    say "Installation complete!"
     say ""
-    say "Stalwart is running in bootstrap mode. A temporary administrator"
-    say "password was generated at startup and printed to the service logs."
-    say ""
-    say "👉 To find the password, inspect the service logs:"
-    case "$_service_type" in
-        systemd)
-            say "     journalctl -u stalwart -n 200 | grep -A8 'bootstrap mode'"
+    case "$_install_mode" in
+        1)
+            say "Binary updated. Existing config, env, and database were left unchanged."
             ;;
-        initd)
-            say "     grep -A8 'bootstrap mode' /var/log/syslog 2>/dev/null \\"
-            say "       || grep -A8 'bootstrap mode' /var/log/messages"
+        2)
+            say "Environment updated at ${_env_file}."
             ;;
-        launchd)
-            say "     sudo log show --predicate 'process == \"stalwart\"' --last 5m"
-            ;;
-        rcd)
-            say "     grep -A8 'bootstrap mode' ${_log_dir}/stalwart.log"
+        *)
+            _recovery_port="$(recovery_port "$_env_file")"
+            say "Stalwart is running in bootstrap mode. A temporary administrator"
+            say "password was generated at startup and printed to the service logs."
+            say ""
+            say "To find the password, inspect the service logs:"
+            case "$_service_type" in
+                systemd)
+                    say "     journalctl -u stalwart -n 200 | grep -A8 'bootstrap mode'"
+                    ;;
+                initd)
+                    say "     grep -A8 'bootstrap mode' /var/log/syslog 2>/dev/null \\"
+                    say "       || grep -A8 'bootstrap mode' /var/log/messages"
+                    ;;
+                rcd)
+                    say "     grep -A8 'bootstrap mode' ${_log_dir}/stalwart.log"
+                    ;;
+            esac
+            say ""
+            say "   Or set STALWART_RECOVERY_ADMIN=admin:<password> in"
+            say "   ${_env_file} and restart the service to pin a credential."
+            say ""
+            say "   Finish setup at: http://${_hostname}:${_recovery_port}/admin"
             ;;
     esac
-    say ""
-    say "   Or set STALWART_RECOVERY_ADMIN=admin:<password> in"
-    say "   ${_env_file} and restart the service to pin a credential."
-    say ""
-    say "   Finish setup at: http://${_host}:8080/admin"
     say ""
 
     return 0
@@ -189,13 +1011,42 @@ main() {
 
 print_usage() {
     cat <<'EOF'
-Usage: install.sh [--fdb] [PREFIX]
+Usage: install.sh [OPTIONS] [PREFIX]
 
 Install Stalwart into standard FHS paths or under a custom prefix.
 
 Options:
-  --fdb       Install the FoundationDB build.
-  -h, --help  Show this help.
+  -y, --yes, --non-interactive  Non-interactive install using defaults
+  -u, --update                  Update binary only
+  --repo <repo|url>             GitHub owner/repo or https base URL
+  --version <tag>               Release tag (default: latest)
+  --file <path>                 Local .tar.gz archive
+  --prefix <path>               Installation prefix
+  --user <name>                 Service account (default: stalwart)
+  --hostname <host>             STALWART_HOSTNAME
+  --public-url <url>            STALWART_PUBLIC_URL
+  --admin <user:pass>           Custom admin; omit for random
+  --smtp-port <n>               STALWART_LISTEN_SMTP (default: 25)
+  --submission-port <n>         STALWART_LISTEN_SUBMISSION (default: 587)
+  --submissions-port <n>        STALWART_LISTEN_SUBMISSIONS (default: 465)
+  --imap-port <n>               STALWART_LISTEN_IMAP (default: 993)
+  --pop3-port <n>               STALWART_LISTEN_POP3 (default: 995)
+  --sieve-port <n>              STALWART_LISTEN_SIEVE (default: 4190)
+  --https-port <n>              STALWART_LISTEN_HTTPS (default: 443)
+  --http-port <n>               STALWART_LISTEN_HTTP (default: 8080)
+  --tls / --no-tls              STALWART_TLS=true / false (default: --tls)
+  --dc-imap-host <host>         STALWART_DC_IMAP_HOST
+  --dc-imap-port <n>            STALWART_DC_IMAP_PORT
+  --dc-imap-security <s>        STALWART_DC_IMAP_SECURITY (default: ssl)
+  --dc-smtp-host <host>         STALWART_DC_SMTP_HOST
+  --dc-smtp-port <n>            STALWART_DC_SMTP_PORT
+  --dc-smtp-security <s>        STALWART_DC_SMTP_SECURITY (default: ssl)
+  --dc-ic <0|1|3>               STALWART_DC_IC (default: 3)
+  --no-start                    Do not start or restart the service
+  -h, --help                    Show this help
+
+PREFIX may also be given as a single positional argument. If both are
+given, the last --prefix wins. Extra positionals are an error.
 
 With no PREFIX, Stalwart is installed under standard FHS paths:
   binary   /usr/local/bin/stalwart
@@ -213,39 +1064,82 @@ When PREFIX is provided, a self-contained layout is used instead:
 EOF
 }
 
+emit_env() {
+    printf '%s=' "$1"
+    quote_env_value "$2"
+}
+
+apply_admin_flag() {
+    if [ "$1" = random ]; then
+        _admin=
+        return 0
+    fi
+    if contains_cr_lf_or_quote "$1"; then
+        err "Credential must be username:password or 'random'."
+    fi
+    case "$1" in
+        *:*) ;;
+        *) err "Credential must be username:password or 'random'." ;;
+    esac
+    _admin_user="${1%%:*}"
+    _admin_pass="${1#*:}"
+    if [ -z "$_admin_user" ] || ! printf '%s' "$_admin_user" | grep -Eq '^[A-Za-z0-9_-]+$'; then
+        err "Username must be alphanumeric, underscore, or hyphen."
+    fi
+    if [ "${#_admin_pass}" -lt 12 ]; then
+        err "Password must be at least 12 characters."
+    fi
+    _admin="$1"
+}
+
 write_env_file() {
-    cat > "$1" <<'EOF'
-# Environment variables for the Stalwart service.
-# Uncomment and edit an entry to override its default.
-
-# Override the hostname used in HTTP responses
-#STALWART_HOSTNAME=mail.example.com
-
-# Override the public base URL published in OAuth, OIDC, and JMAP discovery
-# documents. Accepts scheme, host, optional port, and optional path prefix.
-#STALWART_PUBLIC_URL=https://mail.example.com
-
-# Enable bootstrap / recovery mode on startup. Accepted: 1, true. Default: false.
-#STALWART_RECOVERY_MODE=true
-
-# Log level while in recovery mode. Default: info.
-#STALWART_RECOVERY_MODE_LOG_LEVEL=debug
-
-# HTTP port used in recovery mode. Default: 8080.
-#STALWART_RECOVERY_MODE_PORT=9090
-
-# Fixed administrator credentials — format: username:password
-# Default: a temporary random password is generated and printed to the logs.
-#STALWART_RECOVERY_ADMIN=admin:changeme
-
-# Cluster role assigned to this node. Must match a role name defined in the
-# cluster registry. Leave unset for a standalone (non-clustered) deployment.
-#STALWART_ROLE=primary
-
-# Push-notification shard this node is responsible for, when running in a
-# cluster.
-#STALWART_PUSH_SHARD=1
-EOF
+    {
+        printf '%s\n' '# Environment variables for the Stalwart service.'
+        printf '%s\n' '# Uncomment and edit an entry to override its default.'
+        printf '\n'
+        printf '%s\n' '# Override the hostname used in HTTP responses'
+        emit_env STALWART_HOSTNAME "$_hostname" || return 1
+        printf '\n'
+        printf '%s\n' '# Override the public base URL published in OAuth, OIDC, and JMAP discovery'
+        printf '%s\n' '# documents. Accepts scheme, host, optional port, and optional path prefix.'
+        emit_env STALWART_PUBLIC_URL "$_public_url" || return 1
+        printf '\n'
+        printf '%s\n' '# First-boot listeners. Port 0 skips that listener.'
+        emit_env STALWART_LISTEN_SMTP "$_listen_smtp" || return 1
+        emit_env STALWART_LISTEN_SUBMISSION "$_listen_submission" || return 1
+        emit_env STALWART_LISTEN_SUBMISSIONS "$_listen_submissions" || return 1
+        emit_env STALWART_LISTEN_IMAP "$_listen_imap" || return 1
+        emit_env STALWART_LISTEN_POP3 "$_listen_pop3" || return 1
+        emit_env STALWART_LISTEN_SIEVE "$_listen_sieve" || return 1
+        emit_env STALWART_LISTEN_HTTPS "$_listen_https" || return 1
+        emit_env STALWART_LISTEN_HTTP "$_listen_http" || return 1
+        printf '\n'
+        printf '%s\n' '# TLS on inserted listeners (1/true/0/false).'
+        emit_env STALWART_TLS "$_tls" || return 1
+        printf '\n'
+        printf '%s\n' '# DeltaChat advertised endpoints (first insert only).'
+        emit_env STALWART_DC_IMAP_HOST "$_dc_imap_host" || return 1
+        emit_env STALWART_DC_IMAP_PORT "$_dc_imap_port" || return 1
+        emit_env STALWART_DC_IMAP_SECURITY "$_dc_imap_security" || return 1
+        emit_env STALWART_DC_SMTP_HOST "$_dc_smtp_host" || return 1
+        emit_env STALWART_DC_SMTP_PORT "$_dc_smtp_port" || return 1
+        emit_env STALWART_DC_SMTP_SECURITY "$_dc_smtp_security" || return 1
+        emit_env STALWART_DC_IC "$_dc_ic" || return 1
+        if [ -n "${_admin:-}" ] && [ "$_admin" != random ]; then
+            printf '\n'
+            printf '%s\n' '# Fixed administrator credentials — format: username:password'
+            emit_env STALWART_RECOVERY_ADMIN "$_admin" || return 1
+        fi
+        printf '\n'
+        printf '%s\n' '# Cluster role assigned to this node. Must match a role name defined in the'
+        printf '%s\n' '# cluster registry. Leave unset for a standalone (non-clustered) deployment.'
+        printf '%s\n' '#STALWART_ROLE=primary'
+        printf '\n'
+        printf '%s\n' '# Push-notification shard this node is responsible for, when running in a'
+        printf '%s\n' '# cluster.'
+        printf '%s\n' '#STALWART_PUSH_SHARD=1'
+    } > "$1" || return 1
+    chmod 0640 "$1"
 }
 
 create_account() {
@@ -255,31 +1149,7 @@ create_account() {
         return 0
     fi
     say "🖥️  Creating '${_account}' account..."
-    if [ "$_os" = "macos" ]; then
-        local _last_uid _last_gid _uid _gid
-        _last_uid="$(dscacheutil -q user | grep uid | awk '{print $2}' | sort -n | tail -n 1)"
-        _last_gid="$(dscacheutil -q group | grep gid | awk '{print $2}' | sort -n | tail -n 1)"
-        _uid="$((_last_uid+1))"
-        _gid="$((_last_gid+1))"
-
-        ensure dscl /Local/Default -create Groups/_stalwart
-        ensure dscl /Local/Default -create Groups/_stalwart Password \*
-        ensure dscl /Local/Default -create Groups/_stalwart PrimaryGroupID $_gid
-        ensure dscl /Local/Default -create Groups/_stalwart RealName "Stalwart service"
-        ensure dscl /Local/Default -create Groups/_stalwart RecordName _stalwart stalwart
-
-        ensure dscl /Local/Default -create Users/_stalwart
-        ensure dscl /Local/Default -create Users/_stalwart NFSHomeDirectory /var/empty
-        ensure dscl /Local/Default -create Users/_stalwart Password \*
-        ensure dscl /Local/Default -create Users/_stalwart PrimaryGroupID $_gid
-        ensure dscl /Local/Default -create Users/_stalwart RealName "Stalwart service"
-        ensure dscl /Local/Default -create Users/_stalwart RecordName _stalwart stalwart
-        ensure dscl /Local/Default -create Users/_stalwart UniqueID $_uid
-        ensure dscl /Local/Default -create Users/_stalwart UserShell /usr/bin/false
-
-        ensure dscl /Local/Default -delete /Users/_stalwart AuthenticationAuthority
-        ensure dscl /Local/Default -delete /Users/_stalwart PasswordPolicyOptions
-    elif [ "$_os" = "freebsd" ]; then
+    if [ "$_os" = "freebsd" ]; then
         ensure pw useradd -n "$_account" -c "Stalwart service" -d /nonexistent -s /usr/sbin/nologin -w no
     else
         ensure useradd "$_account" -s /usr/sbin/nologin -M -r -U
@@ -313,7 +1183,9 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     systemctl enable stalwart.service
-    systemctl restart stalwart.service
+    if [ "${_SKIP_START:-0}" -eq 0 ]; then
+        systemctl restart stalwart.service
+    fi
 }
 
 create_service_linux_initd() {
@@ -419,51 +1291,9 @@ exit 0
 EOF
     chmod +x /etc/init.d/stalwart
     update-rc.d stalwart defaults
-    service stalwart start
-}
-
-create_service_macos() {
-    local _bin="$1" _config="$2" _env="$3" _user="$4"
-    local _plist="/Library/LaunchDaemons/stalwart.plist"
-
-    # Remove any legacy LaunchDaemons from a prior install
-    if [ -f "$_plist" ]; then
-        launchctl bootout system/ "$_plist" 2>/dev/null || true
-        rm -f "$_plist"
+    if [ "${_SKIP_START:-0}" -eq 0 ]; then
+        service stalwart start
     fi
-
-    # launchd has no EnvironmentFile equivalent — wrap with sh to source the env file
-    cat > "$_plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN"
-    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-    <dict>
-        <key>Label</key>
-        <string>stalwart</string>
-        <key>ServiceDescription</key>
-        <string>Stalwart</string>
-        <key>UserName</key>
-        <string>${_user}</string>
-        <key>GroupName</key>
-        <string>${_user}</string>
-        <key>ProgramArguments</key>
-        <array>
-            <string>/bin/sh</string>
-            <string>-c</string>
-            <string>set -a; if [ -r "${_env}" ]; then . "${_env}"; fi; set +a; exec "${_bin}" --config="${_config}"</string>
-        </array>
-        <key>RunAtLoad</key>
-        <true/>
-        <key>KeepAlive</key>
-        <true/>
-    </dict>
-</plist>
-EOF
-    chmod 0644 "$_plist"
-    chown root:wheel "$_plist"
-    launchctl bootout system/ "$_plist" 2>/dev/null || true
-    launchctl bootstrap system/ "$_plist"
 }
 
 create_service_freebsd() {
@@ -519,8 +1349,10 @@ run_rc_command "\$1"
 EOF
     chmod +x /usr/local/etc/rc.d/stalwart
     sysrc stalwart_enable=YES
-    service stalwart stop > /dev/null 2>&1 || true
-    service stalwart start
+    if [ "${_SKIP_START:-0}" -eq 0 ]; then
+        service stalwart stop > /dev/null 2>&1 || true
+        service stalwart start
+    fi
 }
 
 

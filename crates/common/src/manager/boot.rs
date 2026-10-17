@@ -169,14 +169,19 @@ impl BootManager {
                     trc::event!(
                         Server(trc::ServerEvent::BootstrapMode),
                         Hostname = bootstrap.registry.local_hostname().to_string(),
-                        Details =
-                            "No configuration file was found. Port 8080 is open for initial setup.",
+                        Details = format!(
+                            "No configuration file was found. Port {} is open for initial setup.",
+                            crate::manager::defaults::recovery_http_port()
+                        ),
                         Version = env!("STALWART_VERSION"),
                     );
                 } else if bootstrap.registry.is_recovery_mode() {
                     trc::event!(
                         Server(trc::ServerEvent::RecoveryMode),
-                        Details = "Port 8080 is open for troubleshooting and recovery.",
+                        Details = format!(
+                            "Port {} is open for troubleshooting and recovery.",
+                            crate::manager::defaults::recovery_http_port()
+                        ),
                         Hostname = bootstrap.registry.local_hostname().to_string(),
                         Version = env!("STALWART_VERSION"),
                     );

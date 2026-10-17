@@ -440,15 +440,9 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
         .await?
         == 0
     {
-        for (protocol, name, port, tls_implicit) in [
-            (NetworkListenerProtocol::Smtp, "smtp", 25, false),
-            (NetworkListenerProtocol::Smtp, "submissions", 465, true),
-            (NetworkListenerProtocol::Imap, "imaps", 993, true),
-            (NetworkListenerProtocol::Pop3, "pop3s", 995, true),
-            (NetworkListenerProtocol::ManageSieve, "sieve", 4190, false),
-            (NetworkListenerProtocol::Http, "https", 443, true),
-            (NetworkListenerProtocol::Http, "http", 8080, false),
-        ] {
+        let get = |k: &str| std::env::var(k).ok();
+        let use_tls = env_bool_from(get("STALWART_TLS").as_deref(), true);
+        for (protocol, name, port, tls_implicit) in default_listener_specs_from(get) {
             bp.registry
                 .write(RegistryWrite::insert(
                     &NetworkListener {
@@ -457,7 +451,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                         ]),
                         name: name.to_string(),
                         protocol,
-                        use_tls: true,
+                        use_tls,
                         tls_implicit,
                         ..Default::default()
                     }
@@ -540,7 +534,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                     .await?;
             }
         } else {
-            let mut dc = DeltaChat::default();
+            let mut dc = delta_chat_from_env();
             if let Some(domain_id) = sys_domain {
                 dc.domain_id = domain_id;
             }
@@ -572,4 +566,212 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
     }
 
     Ok(())
+}
+
+
+
+pub(crate) fn delta_chat_from_get(get: impl Fn(&str) -> Option<String>) -> DeltaChat {
+    let mut dc = DeltaChat::default();
+    dc.imap_host = env_str_from(get("STALWART_DC_IMAP_HOST").as_deref(), "");
+    dc.imap_port = u64::from(env_u16_from(
+        get("STALWART_DC_IMAP_PORT").as_deref(),
+        env_u16_from(get("STALWART_LISTEN_IMAP").as_deref(), 993),
+    ));
+    dc.imap_security = match get("STALWART_DC_IMAP_SECURITY").as_deref().map(str::trim) {
+        Some(s @ ("ssl" | "starttls" | "default" | "plain")) => s.to_string(),
+        _ => "ssl".into(),
+    };
+    dc.smtp_host = env_str_from(get("STALWART_DC_SMTP_HOST").as_deref(), "");
+    dc.smtp_port = u64::from(env_u16_from(
+        get("STALWART_DC_SMTP_PORT").as_deref(),
+        env_u16_from(get("STALWART_LISTEN_SUBMISSIONS").as_deref(), 465),
+    ));
+    dc.smtp_security = match get("STALWART_DC_SMTP_SECURITY").as_deref().map(str::trim) {
+        Some(s @ ("ssl" | "starttls" | "default" | "plain")) => s.to_string(),
+        _ => "ssl".into(),
+    };
+    dc.certificate_checks = match get("STALWART_DC_IC").as_deref().map(str::trim) {
+        Some(s @ ("0" | "1" | "3")) => s.to_string(),
+        _ => "3".into(),
+    };
+    dc
+}
+
+pub(crate) fn delta_chat_from_env() -> DeltaChat {
+    delta_chat_from_get(|k| std::env::var(k).ok())
+}
+
+pub(crate) fn default_listener_specs_from(
+    get: impl Fn(&str) -> Option<String>,
+) -> Vec<(NetworkListenerProtocol, &'static str, u16, bool)> {
+    let use_tls = env_bool_from(get("STALWART_TLS").as_deref(), true);
+    const ROWS: &[(NetworkListenerProtocol, &str, &str, u16, bool)] = &[
+        (NetworkListenerProtocol::Smtp, "smtp", "STALWART_LISTEN_SMTP", 25, false),
+        (NetworkListenerProtocol::Smtp, "submission", "STALWART_LISTEN_SUBMISSION", 587, false),
+        (NetworkListenerProtocol::Smtp, "submissions", "STALWART_LISTEN_SUBMISSIONS", 465, true),
+        (NetworkListenerProtocol::Imap, "imaps", "STALWART_LISTEN_IMAP", 993, true),
+        (NetworkListenerProtocol::Pop3, "pop3s", "STALWART_LISTEN_POP3", 995, true),
+        (NetworkListenerProtocol::ManageSieve, "sieve", "STALWART_LISTEN_SIEVE", 4190, false),
+        (NetworkListenerProtocol::Http, "https", "STALWART_LISTEN_HTTPS", 443, true),
+        (NetworkListenerProtocol::Http, "http", "STALWART_LISTEN_HTTP", 8080, false),
+    ];
+    ROWS.iter()
+        .filter_map(|&(protocol, name, key, default, tls_implicit)| {
+            let port = env_u16_from(get(key).as_deref(), default);
+            if port == 0 {
+                return None;
+            }
+            Some((protocol, name, port, use_tls && tls_implicit))
+        })
+        .collect()
+}
+
+pub(crate) fn env_u16_from(raw: Option<&str>, default: u16) -> u16 {
+    let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return default;
+    };
+    s.parse().unwrap_or_else(|_| {
+        trc::event!(
+            Server(trc::ServerEvent::Startup),
+            Details = format!("invalid port {s:?}, using {default}")
+        );
+        default
+    })
+}
+
+pub(crate) fn env_bool_from(raw: Option<&str>, default: bool) -> bool {
+    match raw.map(str::trim) {
+        Some("1" | "true" | "TRUE" | "yes" | "YES") => true,
+        Some("0" | "false" | "FALSE" | "no" | "NO") => false,
+        Some(other) if !other.is_empty() => {
+            trc::event!(
+                Server(trc::ServerEvent::Startup),
+                Details = format!("invalid bool {other:?}, using {default}")
+            );
+            default
+        }
+        _ => default,
+    }
+}
+
+pub(crate) fn env_str_from(raw: Option<&str>, default: &str) -> String {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => default.to_string(),
+    }
+}
+
+pub(crate) fn recovery_http_port_from(recovery: Option<&str>, listen_http: Option<&str>) -> u16 {
+    let p = env_u16_from(recovery, env_u16_from(listen_http, 8080));
+    if p == 0 { 8080 } else { p }
+}
+
+pub(crate) fn recovery_http_port() -> u16 {
+    recovery_http_port_from(
+        std::env::var("STALWART_RECOVERY_MODE_PORT").ok().as_deref(),
+        std::env::var("STALWART_LISTEN_HTTP").ok().as_deref(),
+    )
+}
+
+pub(crate) fn env_u16(key: &str, default: u16) -> u16 {
+    env_u16_from(std::env::var(key).ok().as_deref(), default)
+}
+
+pub(crate) fn env_bool(key: &str, default: bool) -> bool {
+    env_bool_from(std::env::var(key).ok().as_deref(), default)
+}
+
+pub(crate) fn env_str(key: &str, default: &str) -> String {
+    env_str_from(std::env::var(key).ok().as_deref(), default)
+}
+
+
+#[cfg(test)]
+mod env_parse_tests {
+    use super::{
+        default_listener_specs_from, delta_chat_from_get, env_bool_from, env_str_from,
+        env_u16_from, recovery_http_port_from,
+    };
+
+    #[test]
+    fn env_u16_default_on_empty() {
+        assert_eq!(env_u16_from(None, 25), 25);
+        assert_eq!(env_u16_from(Some(""), 25), 25);
+        assert_eq!(env_u16_from(Some("nope"), 25), 25);
+    }
+
+    #[test]
+    fn env_u16_zero_and_value() {
+        assert_eq!(env_u16_from(Some("0"), 25), 0);
+        assert_eq!(env_u16_from(Some("587"), 25), 587);
+        assert_eq!(env_u16_from(Some("65535"), 25), 65535);
+        assert_eq!(env_u16_from(Some("65536"), 25), 25);
+    }
+
+    #[test]
+    fn env_bool_and_str() {
+        assert!(env_bool_from(Some("true"), false));
+        assert!(!env_bool_from(Some("0"), true));
+        assert!(env_bool_from(None, true));
+        assert_eq!(env_str_from(Some(" mail.example "), "x"), "mail.example");
+        assert_eq!(env_str_from(Some(""), "ssl"), "ssl");
+    }
+
+    #[test]
+    fn default_listeners_include_submission_587() {
+        let specs = default_listener_specs_from(|k| match k {
+            "STALWART_TLS" => Some("true".into()),
+            _ => None,
+        });
+        assert!(specs.iter().any(|s| s.1 == "submission" && s.2 == 587));
+        assert!(specs.iter().any(|s| s.1 == "submissions" && s.2 == 465));
+        assert_eq!(specs.len(), 8);
+    }
+
+    #[test]
+    fn default_listeners_skip_zero_and_honor_tls_off() {
+        let specs = default_listener_specs_from(|k| match k {
+            "STALWART_LISTEN_POP3" => Some("0".into()),
+            "STALWART_LISTEN_HTTP" => Some("9080".into()),
+            "STALWART_TLS" => Some("false".into()),
+            _ => None,
+        });
+        assert!(!specs.iter().any(|s| s.1 == "pop3s"));
+        let http = specs.iter().find(|s| s.1 == "http").unwrap();
+        assert_eq!(http.2, 9080);
+        assert!(specs.iter().all(|s| !s.3));
+    }
+
+    #[test]
+    fn recovery_http_port_fallback() {
+        assert_eq!(recovery_http_port_from(None, None), 8080);
+        assert_eq!(recovery_http_port_from(Some("9090"), Some("8080")), 9090);
+        assert_eq!(recovery_http_port_from(None, Some("9080")), 9080);
+        assert_eq!(recovery_http_port_from(Some("0"), None), 8080);
+    }
+
+    #[test]
+    fn delta_chat_from_env_overlays_ports() {
+        let dc = delta_chat_from_get(|k| match k {
+            "STALWART_DC_IMAP_PORT" => Some("1993".into()),
+            "STALWART_DC_IC" => Some("1".into()),
+            "STALWART_DC_IMAP_HOST" => Some("mail.example.org".into()),
+            _ => None,
+        });
+        assert_eq!(dc.imap_port, 1993u64);
+        assert_eq!(dc.certificate_checks, "1");
+        assert_eq!(dc.imap_host, "mail.example.org");
+        assert_eq!(dc.smtp_port, 465u64);
+    }
+
+    #[test]
+    fn delta_chat_from_env_rejects_bad_security() {
+        let dc = delta_chat_from_get(|k| match k {
+            "STALWART_DC_IMAP_SECURITY" => Some("bogus".into()),
+            "STALWART_DC_IC" => Some("9".into()),
+            _ => None,
+        });
+        assert_eq!(dc.imap_security, "ssl");
+        assert_eq!(dc.certificate_checks, "3");
+    }
 }

@@ -55,7 +55,8 @@ expect_fail validate_public_url "mail.example.org"
 expect_fail validate_public_url "ftp://x"
 
 expect_ok validate_admin "random"
-expect_ok validate_admin "admin:twelvechars"
+expect_ok validate_admin "admin:twelvecharss"
+expect_fail validate_admin "admin:twelvechars"
 expect_fail validate_admin "admin:short"
 expect_fail validate_admin "adminonly"
 expect_fail validate_admin ":twelvecharsxx"
@@ -67,6 +68,15 @@ expect_fail validate_mode "0"
 expect_ok validate_yes_no "Y"
 expect_ok validate_yes_no "n"
 expect_fail validate_yes_no "maybe"
+
+expect_ok validate_port 0
+expect_ok validate_port 65535
+expect_fail validate_port 65536
+expect_fail validate_port -1
+expect_ok validate_dc_security ssl
+expect_fail validate_dc_security bogus
+expect_ok validate_dc_ic 3
+expect_fail validate_dc_ic 2
 ok validators
 
 # --- mapping ---
@@ -86,6 +96,9 @@ ok artifact_target
     "https://github.com/Rezishon/stalwart/releases/download/v0.16.25-rl1/stalwart-aarch64-linux.tar.gz" ] || fail url-tag
 [ "$(download_url https://example.com/dl latest x86_64-linux)" = \
     "https://example.com/dl/stalwart-x86_64-linux.tar.gz" ] || fail url-custom
+if download_url http://example.com/dl latest x86_64-linux >/dev/null 2>&1; then
+    fail url-http
+fi
 ok download_url
 
 # --- paths ---
@@ -113,12 +126,139 @@ STALWART_ROLE=primary
 #STALWART_RECOVERY_ADMIN=admin:changeme
 EOF
 upsert_env "$_tmp" STALWART_HOSTNAME mail.example.org
-grep -q '^STALWART_HOSTNAME=mail.example.org$' "$_tmp" || fail upsert-uncomment
+grep -q "^STALWART_HOSTNAME='mail.example.org'$" "$_tmp" || fail upsert-uncomment
 grep -q '^STALWART_ROLE=primary$' "$_tmp" || fail upsert-keep-other
 grep -q '^#STALWART_RECOVERY_ADMIN=admin:changeme$' "$_tmp" || fail upsert-leave-admin
 upsert_env "$_tmp" STALWART_PUBLIC_URL https://mail.example.org
-grep -q '^STALWART_PUBLIC_URL=https://mail.example.org$' "$_tmp" || fail upsert-append
+grep -q "^STALWART_PUBLIC_URL='https://mail.example.org'$" "$_tmp" || fail upsert-append
 rm -f "$_tmp"
 ok upsert_env
+
+# --- write_env_file ---
+_tmp="$(mktemp)"
+_hostname=mail.example.org
+_public_url=https://mail.example.org
+_listen_smtp=25
+_listen_submission=587
+_listen_submissions=465
+_listen_imap=993
+_listen_pop3=995
+_listen_sieve=4190
+_listen_https=443
+_listen_http=8080
+_tls=true
+_dc_imap_host=mail.example.org
+_dc_imap_port=993
+_dc_imap_security=ssl
+_dc_smtp_host=mail.example.org
+_dc_smtp_port=465
+_dc_smtp_security=ssl
+_dc_ic=3
+_admin=
+write_env_file "$_tmp"
+grep -q "^STALWART_LISTEN_SUBMISSION='587'$" "$_tmp" || fail env-587
+grep -q "^STALWART_TLS='true'$" "$_tmp" || fail env-tls
+grep -q "^STALWART_DC_IC='3'$" "$_tmp" || fail env-ic
+if grep -q '^STALWART_RECOVERY_MODE=' "$_tmp"; then fail no-recovery-mode; fi
+if grep -q '^STALWART_RECOVERY_ADMIN=' "$_tmp"; then fail no-admin-when-random; fi
+_mode=$(stat -c '%a' "$_tmp" 2>/dev/null || stat -f '%OLp' "$_tmp")
+[ "$_mode" = 640 ] || fail env-mode
+rm -f "$_tmp"
+ok write_env_file
+
+sh install.sh --help | grep -q -- '--imap-port' || fail help-imap
+
+# no TTY, no -y
+if sh install.sh --prefix /tmp/nope 2>/dev/null; then
+    fail 'piped install without -y should exit'
+fi
+ok tty-guard
+
+# --- env-file helpers (mode 1/2) ---
+_tmp="$(mktemp)"
+cat > "$_tmp" <<'EOF'
+STALWART_HOSTNAME='mail.example.org'
+STALWART_PUBLIC_URL='https://mail.example.org:8443'
+STALWART_LISTEN_HTTPS='8443'
+STALWART_LISTEN_HTTP='18080'
+STALWART_RECOVERY_MODE_PORT='9090'
+STALWART_RECOVERY_ADMIN='admin:twelvecharsx'
+EOF
+[ "$(read_env_key "$_tmp" STALWART_HOSTNAME)" = mail.example.org ] || fail read-env-host
+[ "$(recovery_port "$_tmp")" = 9090 ] || fail recovery-from-env
+_tmp2="$(mktemp)"
+cat > "$_tmp2" <<'EOF'
+STALWART_LISTEN_HTTP='0'
+EOF
+[ "$(recovery_port "$_tmp2")" = 8080 ] || fail recovery-zero-http
+_tmp3="$(mktemp)"
+cat > "$_tmp3" <<'EOF'
+STALWART_LISTEN_HTTP='18080'
+EOF
+[ "$(recovery_port "$_tmp3")" = 18080 ] || fail recovery-listen-http
+[ "$(recovery_port /no/such/env)" = 8080 ] || fail recovery-missing
+
+_hostname_arg=
+_public_url_arg=
+_hostname=detected.local
+_public_url=
+_listen_https=443
+_env_file="$_tmp"
+seed_mode2_from_env
+[ "$_hostname" = mail.example.org ] || fail seed-hostname
+[ "$_public_url" = 'https://mail.example.org:8443' ] || fail seed-public-url
+
+_hostname_arg=
+_public_url_arg=
+_hostname=detected.local
+_public_url=
+_listen_https=443
+_tmp4="$(mktemp)"
+cat > "$_tmp4" <<'EOF'
+STALWART_HOSTNAME='mail.example.org'
+STALWART_LISTEN_HTTPS='8443'
+EOF
+_env_file="$_tmp4"
+seed_mode2_from_env
+[ "$_hostname" = mail.example.org ] || fail seed-host-only
+set_public_url_default
+[ "$_public_url" = 'https://mail.example.org:8443' ] || fail seed-url-from-https
+
+comment_env_key "$_tmp" STALWART_RECOVERY_ADMIN
+grep -q "^#STALWART_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail comment-admin
+grep -q "^STALWART_LISTEN_HTTPS='8443'$" "$_tmp" || fail comment-leave-listen
+
+_file=/opt/keep-me.tar.gz
+comment_env_key "$_tmp" STALWART_LISTEN_HTTPS
+[ "$_file" = /opt/keep-me.tar.gz ] || fail comment-clobber-file
+upsert_env "$_tmp" STALWART_HOSTNAME mail.example.org
+[ "$_file" = /opt/keep-me.tar.gz ] || fail upsert-clobber-file
+
+_admin=
+cat > "$_tmp" <<'EOF'
+STALWART_HOSTNAME='mail.example.org'
+STALWART_RECOVERY_ADMIN='admin:twelvecharsx'
+EOF
+apply_mode2_admin "$_tmp"
+grep -q "^STALWART_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail mode2-admin-keep
+_admin=random
+apply_mode2_admin "$_tmp"
+grep -q "^#STALWART_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail mode2-admin-random
+_admin='ops:twelvecharsx'
+apply_mode2_admin "$_tmp"
+grep -q "^STALWART_RECOVERY_ADMIN='ops:twelvecharsx'$" "$_tmp" || fail mode2-admin-set
+
+_file=
+_repo=
+apply_source 'https://example.com/dl/stalwart-x86_64-linux.tar.gz'
+[ -z "$_file" ] || fail apply-https-file
+[ "$_repo" = 'https://example.com/dl/stalwart-x86_64-linux.tar.gz' ] || fail apply-https-repo
+apply_source /opt/stalwart.tar.gz
+[ "$_file" = /opt/stalwart.tar.gz ] || fail apply-local
+apply_source Rezishon/stalwart
+[ -z "$_file" ] || fail apply-repo-file
+[ "$_repo" = Rezishon/stalwart ] || fail apply-repo
+rm -f "$_tmp" "$_tmp2" "$_tmp3" "$_tmp4"
+ok env-helpers
 
 printf 'ALL PASSED\n'
