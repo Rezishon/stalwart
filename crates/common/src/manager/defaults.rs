@@ -629,6 +629,18 @@ pub(crate) fn env_str_from(raw: Option<&str>, default: &str) -> String {
     }
 }
 
+pub(crate) fn recovery_http_port_from(recovery: Option<&str>, listen_http: Option<&str>) -> u16 {
+    let p = env_u16_from(recovery, env_u16_from(listen_http, 8080));
+    if p == 0 { 8080 } else { p }
+}
+
+pub(crate) fn recovery_http_port() -> u16 {
+    recovery_http_port_from(
+        std::env::var("STALWART_RECOVERY_MODE_PORT").ok().as_deref(),
+        std::env::var("STALWART_LISTEN_HTTP").ok().as_deref(),
+    )
+}
+
 pub(crate) fn env_u16(key: &str, default: u16) -> u16 {
     env_u16_from(std::env::var(key).ok().as_deref(), default)
 }
@@ -644,7 +656,10 @@ pub(crate) fn env_str(key: &str, default: &str) -> String {
 
 #[cfg(test)]
 mod env_parse_tests {
-    use super::{default_listener_specs_from, env_bool_from, env_str_from, env_u16_from};
+    use super::{
+        default_listener_specs_from, env_bool_from, env_str_from, env_u16_from,
+        recovery_http_port_from,
+    };
 
     #[test]
     fn env_u16_default_on_empty() {
@@ -693,5 +708,13 @@ mod env_parse_tests {
         let http = specs.iter().find(|s| s.1 == "http").unwrap();
         assert_eq!(http.2, 9080);
         assert!(specs.iter().all(|s| !s.3));
+    }
+
+    #[test]
+    fn recovery_http_port_fallback() {
+        assert_eq!(recovery_http_port_from(None, None), 8080);
+        assert_eq!(recovery_http_port_from(Some("9090"), Some("8080")), 9090);
+        assert_eq!(recovery_http_port_from(None, Some("9080")), 9080);
+        assert_eq!(recovery_http_port_from(Some("0"), None), 8080);
     }
 }
