@@ -1066,4 +1066,6 @@ ignore() {
     "$@"
 }
 
-main "$@" || exit 1
+if [ -z "${INSTALL_TEST:-}" ]; then
+    main "$@" || exit 1
+fi
