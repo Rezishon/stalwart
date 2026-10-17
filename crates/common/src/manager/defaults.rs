@@ -573,3 +573,81 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
 
     Ok(())
 }
+
+
+pub(crate) fn env_u16_from(raw: Option<&str>, default: u16) -> u16 {
+    let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return default;
+    };
+    s.parse().unwrap_or_else(|_| {
+        trc::event!(
+            Server(trc::ServerEvent::Startup),
+            Details = format!("invalid port {s:?}, using {default}")
+        );
+        default
+    })
+}
+
+pub(crate) fn env_bool_from(raw: Option<&str>, default: bool) -> bool {
+    match raw.map(str::trim) {
+        Some("1" | "true" | "TRUE" | "yes" | "YES") => true,
+        Some("0" | "false" | "FALSE" | "no" | "NO") => false,
+        Some(other) if !other.is_empty() => {
+            trc::event!(
+                Server(trc::ServerEvent::Startup),
+                Details = format!("invalid bool {other:?}, using {default}")
+            );
+            default
+        }
+        _ => default,
+    }
+}
+
+pub(crate) fn env_str_from(raw: Option<&str>, default: &str) -> String {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => default.to_string(),
+    }
+}
+
+pub(crate) fn env_u16(key: &str, default: u16) -> u16 {
+    env_u16_from(std::env::var(key).ok().as_deref(), default)
+}
+
+pub(crate) fn env_bool(key: &str, default: bool) -> bool {
+    env_bool_from(std::env::var(key).ok().as_deref(), default)
+}
+
+pub(crate) fn env_str(key: &str, default: &str) -> String {
+    env_str_from(std::env::var(key).ok().as_deref(), default)
+}
+
+
+#[cfg(test)]
+mod env_parse_tests {
+    use super::{env_bool_from, env_str_from, env_u16_from};
+
+    #[test]
+    fn env_u16_default_on_empty() {
+        assert_eq!(env_u16_from(None, 25), 25);
+        assert_eq!(env_u16_from(Some(""), 25), 25);
+        assert_eq!(env_u16_from(Some("nope"), 25), 25);
+    }
+
+    #[test]
+    fn env_u16_zero_and_value() {
+        assert_eq!(env_u16_from(Some("0"), 25), 0);
+        assert_eq!(env_u16_from(Some("587"), 25), 587);
+        assert_eq!(env_u16_from(Some("65535"), 25), 65535);
+        assert_eq!(env_u16_from(Some("65536"), 25), 25);
+    }
+
+    #[test]
+    fn env_bool_and_str() {
+        assert!(env_bool_from(Some("true"), false));
+        assert!(!env_bool_from(Some("0"), true));
+        assert!(env_bool_from(None, true));
+        assert_eq!(env_str_from(Some(" mail.example "), "x"), "mail.example");
+        assert_eq!(env_str_from(Some(""), "ssl"), "ssl");
+    }
+}
