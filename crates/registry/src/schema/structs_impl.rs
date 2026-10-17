@@ -48187,6 +48187,21 @@ mod deltachat_pickle_tests {
         assert!(dc.validate(&mut errors));
         assert!(errors.is_empty());
 
+        errors.clear();
+        dc.instant_prefix_enabled = true;
+        dc.instant_prefix = "chat_".into();
+        dc.custom_prefix_enabled = false;
+        dc.custom_prefix.clear();
+        assert!(dc.validate(&mut errors), "{errors:?}");
+        assert!(errors.is_empty());
+
+        errors.clear();
+        dc.instant_prefix_enabled = false;
+        dc.custom_prefix_enabled = true;
+        dc.custom_prefix = "usr_".into();
+        assert!(dc.validate(&mut errors), "{errors:?}");
+        assert!(errors.is_empty());
+
         // Prefix length > 16
         dc.instant_prefix = "a".repeat(17);
         dc.validate(&mut errors);
