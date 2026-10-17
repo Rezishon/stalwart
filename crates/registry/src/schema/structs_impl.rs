@@ -47646,9 +47646,124 @@ impl RegistryJsonPropertyPatch for ZenohCoordinator {
     }
 }
 
+pub const DEFAULT_USERNAME_BLACKLIST: &[&str] = &[
+    // 6.1. System & Administrative Authorities
+    "admin",
+    "administrator",
+    "superadmin",
+    "sysadmin",
+    "root",
+    "master",
+    "owner",
+    "operator",
+    "moderator",
+    "mod",
+    "staff",
+    "team",
+    // 6.2. RFC 2142 Internet Standard Mailboxes
+    "postmaster",
+    "hostmaster",
+    "webmaster",
+    "abuse",
+    "security",
+    "noc",
+    "mailer-daemon",
+    "nobody",
+    // 6.3. Trust, Security & Phishing Lures
+    "support",
+    "help",
+    "helpdesk",
+    "service",
+    "services",
+    "billing",
+    "account",
+    "accounts",
+    "verify",
+    "verification",
+    "security-alert",
+    "official",
+    "login",
+    "auth",
+    "authentication",
+    "password",
+    "recovery",
+    "compliance",
+    "legal",
+    "contact",
+    "sales",
+    "info",
+    "notify",
+    "notification",
+    "notifications",
+    "alerts",
+    "system-alert",
+    // 6.4. Infrastructure, Protocols & Network Daemon Names
+    "daemon",
+    "system",
+    "server",
+    "relay",
+    "mail",
+    "mx",
+    "mx1",
+    "mx2",
+    "smtp",
+    "smtps",
+    "imap",
+    "imaps",
+    "pop",
+    "pop3",
+    "pop3s",
+    "autodiscover",
+    "autoconfig",
+    "mta-sts",
+    "dmarc",
+    "dkim",
+    "spf",
+    "dns",
+    "ns",
+    "ns1",
+    "ns2",
+    "gateway",
+    "router",
+    "proxy",
+    "internal",
+    "api",
+    "dev",
+    "test",
+    "stage",
+    "staging",
+    "prod",
+    "production",
+    // 6.5. Impersonation & Brand Protection
+    "deltachat",
+    "delta-chat",
+    "stalwart",
+    "stalw.art",
+    "chatchi",
+    "bot",
+    "robot",
+    "null",
+    "undefined",
+    "anonymous",
+    "guest",
+    "public",
+    // 6.6. High-Risk Leetspeak & Typo Aliases
+    "adm1n",
+    "admln",
+    "r00t",
+    "supp0rt",
+    "s3curity",
+    "0fficial",
+    // 6.7. Default Wildcards
+    "*admin*",
+    "*support*",
+    "*system*",
+    "*helpdesk*",
+];
+
 impl ObjectImpl for DeltaChat {
     const FLAGS: u64 = OBJ_SINGLETON;
-    const VERSION: u8 = 3;
+    const VERSION: u8 = 4;
     const OBJECT: ObjectType = ObjectType::DeltaChat;
 
     fn validate(&self, errors: &mut Vec<ValidationError>) -> bool {
@@ -47672,6 +47787,51 @@ impl ObjectImpl for DeltaChat {
         }
         if !matches!(self.certificate_checks.as_str(), "0" | "1" | "3") {
             errors.push(ValidationError::required(Property::CertificateChecks));
+        }
+        if self.username_blacklist.len() > 1000 {
+            errors.push(ValidationError::max_length(Property::UsernameBlacklist, 1000));
+        }
+        if self.instant_prefix.len() > 16 {
+            errors.push(ValidationError::max_length(Property::InstantPrefix, 16));
+        }
+        if !self
+            .instant_prefix
+            .chars()
+            .all(|c| matches!(c, 'a'..='z' | '0'..='9' | '.' | '_' | '-'))
+            || self.instant_prefix.starts_with('.')
+            || self.instant_prefix.ends_with('.')
+        {
+            errors.push(ValidationError::invalid(
+                Property::InstantPrefix,
+                &self.instant_prefix,
+            ));
+        }
+        if self.custom_prefix.len() > 16 {
+            errors.push(ValidationError::max_length(Property::CustomPrefix, 16));
+        }
+        if !self
+            .custom_prefix
+            .chars()
+            .all(|c| matches!(c, 'a'..='z' | '0'..='9' | '.' | '_' | '-'))
+            || self.custom_prefix.starts_with('.')
+            || self.custom_prefix.ends_with('.')
+        {
+            errors.push(ValidationError::invalid(
+                Property::CustomPrefix,
+                &self.custom_prefix,
+            ));
+        }
+        if self.instant_prefix_enabled
+            && self.custom_prefix_enabled
+            && !self.instant_prefix.is_empty()
+            && !self.custom_prefix.is_empty()
+            && (self.custom_prefix.starts_with(&self.instant_prefix)
+                || self.instant_prefix.starts_with(&self.custom_prefix))
+        {
+            errors.push(ValidationError::invalid(
+                Property::CustomPrefix,
+                &self.custom_prefix,
+            ));
         }
         errors.len() == neb
     }
@@ -47705,12 +47865,17 @@ impl Pickle for DeltaChat {
         self.smtp_port.pickle(out);
         self.smtp_security.pickle(out);
         self.certificate_checks.pickle(out);
+        self.instant_prefix_enabled.pickle(out);
+        self.instant_prefix.pickle(out);
+        self.custom_prefix_enabled.pickle(out);
+        self.custom_prefix.pickle(out);
+        self.username_blacklist.pickle(out);
     }
 
     fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
         let mut this = Self::default();
         this.enabled = Pickle::unpickle(stream)?;
-        // ponytail: v0 enabled-only; v1 free-text domain/imap (discarded); v2 domain ids; v3 endpoints
+        // ponytail: v0 enabled-only; v1 free-text domain/imap (discarded); v2 domain ids; v3 endpoints; v4 prefixes & blacklist
         if stream.version() >= 1 {
             this.registration_open = Pickle::unpickle(stream)?;
             this.instant_accounts_enabled = Pickle::unpickle(stream)?;
@@ -47741,9 +47906,160 @@ impl Pickle for DeltaChat {
                 this.smtp_security = Pickle::unpickle(stream)?;
                 this.certificate_checks = Pickle::unpickle(stream)?;
             }
+            if stream.version() >= 4 {
+                this.instant_prefix_enabled = Pickle::unpickle(stream)?;
+                this.instant_prefix = Pickle::unpickle(stream)?;
+                this.custom_prefix_enabled = Pickle::unpickle(stream)?;
+                this.custom_prefix = Pickle::unpickle(stream)?;
+                this.username_blacklist = Pickle::unpickle(stream)?;
+            }
         }
         Some(this)
     }
+}
+
+impl Default for DeltaChat {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            registration_open: true,
+            instant_accounts_enabled: true,
+            custom_accounts_enabled: true,
+            frontend_path: None,
+            domain_id: Default::default(),
+            allowed_domains: Default::default(),
+            altcha_required: false,
+            altcha_max_number: 100_000,
+            altcha_hmac_secret: String::new(),
+            imap_host: String::new(),
+            imap_port: 993,
+            imap_security: "ssl".into(),
+            smtp_host: String::new(),
+            smtp_port: 465,
+            smtp_security: "ssl".into(),
+            certificate_checks: "3".into(),
+            instant_prefix_enabled: true,
+            instant_prefix: "dc_".into(),
+            custom_prefix_enabled: false,
+            custom_prefix: String::new(),
+            username_blacklist: Map::new(
+                DEFAULT_USERNAME_BLACKLIST
+                    .iter()
+                    .map(|&s| s.to_string())
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl IntoValue for DeltaChat {
+    fn into_value(self) -> JmapValue<'static> {
+        let mut map = jmap_tools::Map::with_capacity(22);
+        map.insert_unchecked(Property::Enabled, self.enabled.into_value());
+        map.insert_unchecked(Property::RegistrationOpen, self.registration_open.into_value());
+        map.insert_unchecked(
+            Property::InstantAccountsEnabled,
+            self.instant_accounts_enabled.into_value(),
+        );
+        map.insert_unchecked(
+            Property::CustomAccountsEnabled,
+            self.custom_accounts_enabled.into_value(),
+        );
+        map.insert_unchecked(Property::FrontendPath, self.frontend_path.into_value());
+        map.insert_unchecked(Property::DomainId, self.domain_id.into_value());
+        map.insert_unchecked(Property::AllowedDomains, self.allowed_domains.into_value());
+        map.insert_unchecked(Property::AltchaRequired, self.altcha_required.into_value());
+        map.insert_unchecked(Property::AltchaMaxNumber, self.altcha_max_number.into_value());
+        map.insert_unchecked(Property::AltchaHmacSecret, self.altcha_hmac_secret.into_value());
+        map.insert_unchecked(Property::ImapHost, self.imap_host.into_value());
+        map.insert_unchecked(Property::ImapPort, self.imap_port.into_value());
+        map.insert_unchecked(Property::ImapSecurity, self.imap_security.into_value());
+        map.insert_unchecked(Property::SmtpHost, self.smtp_host.into_value());
+        map.insert_unchecked(Property::SmtpPort, self.smtp_port.into_value());
+        map.insert_unchecked(Property::SmtpSecurity, self.smtp_security.into_value());
+        map.insert_unchecked(Property::CertificateChecks, self.certificate_checks.into_value());
+        map.insert_unchecked(
+            Property::InstantPrefixEnabled,
+            self.instant_prefix_enabled.into_value(),
+        );
+        map.insert_unchecked(Property::InstantPrefix, self.instant_prefix.into_value());
+        map.insert_unchecked(
+            Property::CustomPrefixEnabled,
+            self.custom_prefix_enabled.into_value(),
+        );
+        map.insert_unchecked(Property::CustomPrefix, self.custom_prefix.into_value());
+        map.insert_unchecked(
+            Property::UsernameBlacklist,
+            self.username_blacklist.into_value(),
+        );
+        JmapValue::Object(map)
+    }
+}
+
+impl RegistryJsonPropertyPatch for DeltaChat {
+    fn patch_property<'x>(
+        &mut self,
+        mut pointer: JsonPointerPatch<'_>,
+        value: JmapValue<'x>,
+    ) -> PatchResult<'x> {
+        match pointer.next_property() {
+            Some(Property::Enabled) => self.enabled.patch(pointer, value),
+            Some(Property::RegistrationOpen) => self.registration_open.patch(pointer, value),
+            Some(Property::InstantAccountsEnabled) => {
+                self.instant_accounts_enabled.patch(pointer, value)
+            }
+            Some(Property::CustomAccountsEnabled) => {
+                self.custom_accounts_enabled.patch(pointer, value)
+            }
+            Some(Property::FrontendPath) => self.frontend_path.patch(pointer, value),
+            Some(Property::DomainId) => self.domain_id.patch(pointer, value),
+            Some(Property::AllowedDomains) => self.allowed_domains.patch(pointer, value),
+            Some(Property::AltchaRequired) => self.altcha_required.patch(pointer, value),
+            Some(Property::AltchaMaxNumber) => self.altcha_max_number.patch(pointer, value),
+            Some(Property::AltchaHmacSecret) => self.altcha_hmac_secret.patch(pointer, value),
+            Some(Property::ImapHost) => patch_empty_ok(&mut self.imap_host, pointer, value),
+            Some(Property::ImapPort) => self.imap_port.patch(pointer, value),
+            Some(Property::ImapSecurity) => self.imap_security.patch(pointer, value),
+            Some(Property::SmtpHost) => patch_empty_ok(&mut self.smtp_host, pointer, value),
+            Some(Property::SmtpPort) => self.smtp_port.patch(pointer, value),
+            Some(Property::SmtpSecurity) => self.smtp_security.patch(pointer, value),
+            Some(Property::CertificateChecks) => self.certificate_checks.patch(pointer, value),
+            Some(Property::InstantPrefixEnabled) => {
+                self.instant_prefix_enabled.patch(pointer, value)
+            }
+            Some(Property::InstantPrefix) => {
+                patch_empty_ok(&mut self.instant_prefix, pointer, value)
+            }
+            Some(Property::CustomPrefixEnabled) => {
+                self.custom_prefix_enabled.patch(pointer, value)
+            }
+            Some(Property::CustomPrefix) => {
+                patch_empty_ok(&mut self.custom_prefix, pointer, value)
+            }
+            Some(Property::UsernameBlacklist) => self.username_blacklist.patch(pointer, value),
+            Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
+                property: Property::Type,
+                value,
+            }),
+            _ => Err(PatchError::new(pointer, "Invalid property")),
+        }
+    }
+}
+
+fn patch_empty_ok<'x>(
+    host: &mut String,
+    pointer: JsonPointerPatch<'_>,
+    value: JmapValue<'x>,
+) -> PatchResult<'x> {
+    if value.is_null() {
+        host.clear();
+        return pointer.assert_eof();
+    }
+    if let Some(s) = value.into_string() {
+        *host = s.into_owned();
+        return pointer.assert_eof();
+    }
+    Err(PatchError::new(pointer, "Invalid value for property."))
 }
 
 #[cfg(test)]
@@ -47814,111 +48130,144 @@ mod deltachat_pickle_tests {
         assert_eq!(obj.smtp_security, "ssl");
         assert_eq!(obj.certificate_checks, "3");
     }
-}
 
-impl Default for DeltaChat {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            registration_open: true,
-            instant_accounts_enabled: true,
-            custom_accounts_enabled: true,
-            frontend_path: None,
-            domain_id: Default::default(),
-            allowed_domains: Default::default(),
-            altcha_required: false,
-            altcha_max_number: 100_000,
-            altcha_hmac_secret: String::new(),
-            imap_host: String::new(),
-            imap_port: 993,
-            imap_security: "ssl".into(),
-            smtp_host: String::new(),
-            smtp_port: 465,
-            smtp_security: "ssl".into(),
-            certificate_checks: "3".into(),
-        }
+    #[test]
+    fn roundtrip_v4_prefixes_and_blacklist() {
+        let orig = DeltaChat {
+            instant_prefix_enabled: true,
+            instant_prefix: "dc_".into(),
+            custom_prefix_enabled: true,
+            custom_prefix: "usr_".into(),
+            username_blacklist: Map::new(vec![
+                "admin".to_string(),
+                "*support*".to_string(),
+            ]),
+            ..Default::default()
+        };
+        let bytes = orig.to_pickled_vec();
+        let mut stream = PickledStream::new(&bytes).unwrap();
+        let unpickled = DeltaChat::unpickle(&mut stream).unwrap();
+        assert_eq!(orig, unpickled);
     }
-}
 
-impl IntoValue for DeltaChat {
-    fn into_value(self) -> JmapValue<'static> {
-        let mut map = jmap_tools::Map::with_capacity(17);
-        map.insert_unchecked(Property::Enabled, self.enabled.into_value());
-        map.insert_unchecked(Property::RegistrationOpen, self.registration_open.into_value());
-        map.insert_unchecked(
-            Property::InstantAccountsEnabled,
-            self.instant_accounts_enabled.into_value(),
-        );
-        map.insert_unchecked(
-            Property::CustomAccountsEnabled,
-            self.custom_accounts_enabled.into_value(),
-        );
-        map.insert_unchecked(Property::FrontendPath, self.frontend_path.into_value());
-        map.insert_unchecked(Property::DomainId, self.domain_id.into_value());
-        map.insert_unchecked(Property::AllowedDomains, self.allowed_domains.into_value());
-        map.insert_unchecked(Property::AltchaRequired, self.altcha_required.into_value());
-        map.insert_unchecked(Property::AltchaMaxNumber, self.altcha_max_number.into_value());
-        map.insert_unchecked(Property::AltchaHmacSecret, self.altcha_hmac_secret.into_value());
-        map.insert_unchecked(Property::ImapHost, self.imap_host.into_value());
-        map.insert_unchecked(Property::ImapPort, self.imap_port.into_value());
-        map.insert_unchecked(Property::ImapSecurity, self.imap_security.into_value());
-        map.insert_unchecked(Property::SmtpHost, self.smtp_host.into_value());
-        map.insert_unchecked(Property::SmtpPort, self.smtp_port.into_value());
-        map.insert_unchecked(Property::SmtpSecurity, self.smtp_security.into_value());
-        map.insert_unchecked(Property::CertificateChecks, self.certificate_checks.into_value());
-        JmapValue::Object(map)
-    }
-}
+    #[test]
+    fn unpickle_v3_leaves_v4_defaults() {
+        let mut bytes = vec![3u8];
+        true.pickle(&mut bytes);                           // enabled
+        true.pickle(&mut bytes);                           // registration_open
+        true.pickle(&mut bytes);                           // instant_accounts_enabled
+        true.pickle(&mut bytes);                           // custom_accounts_enabled
+        None::<String>.pickle(&mut bytes);                 // frontend_path
+        Id::from(7u32).pickle(&mut bytes);                 // domain_id
+        Map::<Id>::default().pickle(&mut bytes);           // allowed_domains
+        false.pickle(&mut bytes);                          // altcha_required
+        100_000u64.pickle(&mut bytes);                     // altcha_max_number
+        String::new().pickle(&mut bytes);                  // altcha_hmac_secret
+        "imap.example.org".to_string().pickle(&mut bytes); // imap_host
+        993u64.pickle(&mut bytes);                         // imap_port
+        "ssl".to_string().pickle(&mut bytes);              // imap_security
+        "smtp.example.org".to_string().pickle(&mut bytes); // smtp_host
+        465u64.pickle(&mut bytes);                         // smtp_port
+        "ssl".to_string().pickle(&mut bytes);              // smtp_security
+        "3".to_string().pickle(&mut bytes);                // certificate_checks
 
-impl RegistryJsonPropertyPatch for DeltaChat {
-    fn patch_property<'x>(
-        &mut self,
-        mut pointer: JsonPointerPatch<'_>,
-        value: JmapValue<'x>,
-    ) -> PatchResult<'x> {
-        match pointer.next_property() {
-            Some(Property::Enabled) => self.enabled.patch(pointer, value),
-            Some(Property::RegistrationOpen) => self.registration_open.patch(pointer, value),
-            Some(Property::InstantAccountsEnabled) => {
-                self.instant_accounts_enabled.patch(pointer, value)
-            }
-            Some(Property::CustomAccountsEnabled) => {
-                self.custom_accounts_enabled.patch(pointer, value)
-            }
-            Some(Property::FrontendPath) => self.frontend_path.patch(pointer, value),
-            Some(Property::DomainId) => self.domain_id.patch(pointer, value),
-            Some(Property::AllowedDomains) => self.allowed_domains.patch(pointer, value),
-            Some(Property::AltchaRequired) => self.altcha_required.patch(pointer, value),
-            Some(Property::AltchaMaxNumber) => self.altcha_max_number.patch(pointer, value),
-            Some(Property::AltchaHmacSecret) => self.altcha_hmac_secret.patch(pointer, value),
-            Some(Property::ImapHost) => patch_empty_ok(&mut self.imap_host, pointer, value),
-            Some(Property::ImapPort) => self.imap_port.patch(pointer, value),
-            Some(Property::ImapSecurity) => self.imap_security.patch(pointer, value),
-            Some(Property::SmtpHost) => patch_empty_ok(&mut self.smtp_host, pointer, value),
-            Some(Property::SmtpPort) => self.smtp_port.patch(pointer, value),
-            Some(Property::SmtpSecurity) => self.smtp_security.patch(pointer, value),
-            Some(Property::CertificateChecks) => self.certificate_checks.patch(pointer, value),
-            Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
-                property: Property::Type,
-                value,
-            }),
-            _ => Err(PatchError::new(pointer, "Invalid property")),
-        }
+        let mut stream = PickledStream::new(&bytes).unwrap();
+        let obj = DeltaChat::unpickle(&mut stream).expect("v3 blob unpickles into v4 struct");
+        assert!(obj.instant_prefix_enabled);
+        assert_eq!(obj.instant_prefix, "dc_");
+        assert!(!obj.custom_prefix_enabled);
+        assert_eq!(obj.custom_prefix, "");
+        assert!(!obj.username_blacklist.is_empty());
     }
-}
 
-fn patch_empty_ok<'x>(
-    host: &mut String,
-    pointer: JsonPointerPatch<'_>,
-    value: JmapValue<'x>,
-) -> PatchResult<'x> {
-    if value.is_null() {
-        host.clear();
-        return pointer.assert_eof();
+    #[test]
+    fn validate_prefix_constraints() {
+        let mut dc = DeltaChat::default();
+        let mut errors = Vec::new();
+        assert!(dc.validate(&mut errors));
+        assert!(errors.is_empty());
+
+        // Prefix length > 16
+        dc.instant_prefix = "a".repeat(17);
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::max_length(Property::InstantPrefix, 16)));
+
+        // Prefix invalid characters
+        errors.clear();
+        dc.instant_prefix = "Invalid#Prefix!".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::InstantPrefix, "Invalid#Prefix!")));
+
+        // Prefix boundary dot check
+        errors.clear();
+        dc.instant_prefix = ".dc_".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::InstantPrefix, ".dc_")));
+
+        errors.clear();
+        dc.instant_prefix = "dc_.".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::InstantPrefix, "dc_.")));
+
+        errors.clear();
+        dc.instant_prefix = "dc_".into();
+        dc.custom_prefix = ".usr_".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, ".usr_")));
+
+        errors.clear();
+        dc.custom_prefix = "usr_.".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, "usr_.")));
+
+        // Prefix collision when both enabled
+        errors.clear();
+        dc.instant_prefix_enabled = true;
+        dc.custom_prefix_enabled = true;
+        dc.instant_prefix = "test_".into();
+        dc.custom_prefix = "test_".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, "test_")));
+
+        // Sub-string prefix collision when both enabled
+        errors.clear();
+        dc.instant_prefix = "dc_".into();
+        dc.custom_prefix = "dc_vip_".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, "dc_vip_")));
+
+        errors.clear();
+        dc.instant_prefix = "dc_vip_".into();
+        dc.custom_prefix = "dc_".into();
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::invalid(Property::CustomPrefix, "dc_")));
+
+        // Blacklist > 1000
+        errors.clear();
+        dc.custom_prefix = "other_".into();
+        let items: Vec<String> = (0..1001).map(|i| format!("user{}", i)).collect();
+        dc.username_blacklist = Map::new(items);
+        dc.validate(&mut errors);
+        assert!(errors.contains(&ValidationError::max_length(Property::UsernameBlacklist, 1000)));
     }
-    if let Some(s) = value.into_string() {
-        *host = s.into_owned();
-        return pointer.assert_eof();
+
+    #[test]
+    fn patch_prefixes_and_blacklist() {
+        use jmap_tools::JsonPointer;
+        let mut dc = DeltaChat::default();
+        let ptr = JsonPointer::<Property>::parse("instantPrefix");
+        let patch_res = dc.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Str("".into()));
+        assert!(patch_res.is_ok());
+        assert_eq!(dc.instant_prefix, "");
+
+        let ptr = JsonPointer::<Property>::parse("customPrefix");
+        let patch_res = dc.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Str("custom_".into()));
+        assert!(patch_res.is_ok());
+        assert_eq!(dc.custom_prefix, "custom_");
+
+        let ptr = JsonPointer::<Property>::parse("customPrefixEnabled");
+        let patch_res = dc.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Bool(true));
+        assert!(patch_res.is_ok());
+        assert!(dc.custom_prefix_enabled);
     }
-    Err(PatchError::new(pointer, "Invalid value for property."))
 }

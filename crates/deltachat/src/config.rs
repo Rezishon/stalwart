@@ -83,6 +83,11 @@ pub struct DeltaChatSettings {
     pub imap: MailEndpointConfig,
     pub smtp: MailEndpointConfig,
     pub certificate_checks: CertificateChecks,
+    pub instant_prefix_enabled: bool,
+    pub instant_prefix: String,
+    pub custom_prefix_enabled: bool,
+    pub custom_prefix: String,
+    pub username_blacklist: Vec<String>,
 }
 
 impl Default for DeltaChatSettings {
@@ -109,6 +114,14 @@ impl Default for DeltaChatSettings {
                 security: EndpointSecurity::Ssl,
             },
             certificate_checks: CertificateChecks::AcceptInvalid,
+            instant_prefix_enabled: true,
+            instant_prefix: "dc_".into(),
+            custom_prefix_enabled: false,
+            custom_prefix: String::new(),
+            username_blacklist: registry::schema::structs_impl::DEFAULT_USERNAME_BLACKLIST
+                .iter()
+                .map(|s| s.trim().to_ascii_lowercase())
+                .collect(),
         }
     }
 }
@@ -204,6 +217,16 @@ impl From<registry::schema::structs::DeltaChat> for DeltaChatSettings {
                 security: parse_security(&c.smtp_security),
             },
             certificate_checks: parse_ic(&c.certificate_checks),
+            instant_prefix_enabled: c.instant_prefix_enabled,
+            instant_prefix: c.instant_prefix,
+            custom_prefix_enabled: c.custom_prefix_enabled,
+            custom_prefix: c.custom_prefix,
+            username_blacklist: c
+                .username_blacklist
+                .into_inner()
+                .into_iter()
+                .map(|s| s.trim().to_ascii_lowercase())
+                .collect(),
         }
     }
 }
@@ -219,6 +242,14 @@ mod tests {
         assert!(!settings.domain_id.is_valid());
         assert!(settings.allowed_domains.is_empty());
         assert!(!settings.altcha_required);
+        assert!(settings.instant_prefix_enabled);
+        assert_eq!(settings.instant_prefix, "dc_");
+        assert!(!settings.custom_prefix_enabled);
+        assert_eq!(settings.custom_prefix, "");
+        assert_eq!(
+            settings.username_blacklist,
+            registry::schema::structs_impl::DEFAULT_USERNAME_BLACKLIST
+        );
     }
 
     #[test]
@@ -336,5 +367,24 @@ mod tests {
             serde_json::from_str(r#"{"imapHost":"imap.example.org","smtpHost":null}"#).unwrap();
         assert_eq!(c.imap_host, "imap.example.org");
         assert_eq!(c.smtp_host, "");
+    }
+
+    #[test]
+    fn test_settings_from_registry_prefixes_and_blacklist() {
+        let reg = registry::schema::structs::DeltaChat {
+            instant_prefix_enabled: true,
+            instant_prefix: "custom_dc_".into(),
+            custom_prefix_enabled: true,
+            custom_prefix: "usr_".into(),
+            username_blacklist: registry::types::map::Map::new(vec!["  BadUser  ".to_string()]),
+            ..Default::default()
+        };
+
+        let settings = DeltaChatSettings::from(reg);
+        assert!(settings.instant_prefix_enabled);
+        assert_eq!(settings.instant_prefix, "custom_dc_");
+        assert!(settings.custom_prefix_enabled);
+        assert_eq!(settings.custom_prefix, "usr_");
+        assert_eq!(settings.username_blacklist, vec!["baduser"]);
     }
 }

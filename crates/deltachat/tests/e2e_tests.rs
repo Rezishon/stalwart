@@ -87,7 +87,11 @@ fn test_e2e_config_json_requires_hash_algorithm_and_certificate_checks() {
         },
         "altcha":{"required":false,"max_number":1000},
         "password_hash_algorithm":"scrypt",
-        "certificate_checks":"1"
+        "certificate_checks":"1",
+        "instant_prefix_enabled":false,
+        "instant_prefix":"",
+        "custom_prefix_enabled":false,
+        "custom_prefix":""
     }"#;
     let cfg: ConfigDiscoveryResponse =
         serde_json::from_str(json).expect("config JSON must include hash algorithm and ic");
@@ -308,4 +312,102 @@ fn test_e2e_web_spa_static_asset_serving() {
         router.dispatch_web_asset("/api/v1/health").is_none(),
         "router dispatch_web_asset must isolate API routes"
     );
+}
+
+#[tokio::test]
+async fn test_registration_validation_rejections() {
+    let router = DeltaChatRouter::new();
+    let server = dummy_server();
+    let mut settings = DeltaChatSettings {
+        enabled: true,
+        registration_open: true,
+        custom_accounts_enabled: true,
+        instant_accounts_enabled: true,
+        instant_prefix_enabled: true,
+        instant_prefix: "dc_".into(),
+        username_blacklist: vec!["admin".into(), "*support*".into()],
+        ..Default::default()
+    };
+
+    // 1. Exact blacklisted username fails at validation before DB write
+    let bad_req = serde_json::to_vec(&CustomAccountRequest {
+        username: "admin".into(),
+        password_hash: "hash".into(),
+        altcha_payload: None,
+        password: None,
+    })
+    .unwrap();
+    let err = router
+        .dispatch_api(
+            &settings,
+            &server,
+            "POST",
+            "/api/v1/accounts/custom",
+            Some(&bad_req),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, DeltaChatError::InvalidUsername(_)));
+
+    // 2. Wildcard blacklisted username fails
+    let bad_req2 = serde_json::to_vec(&CustomAccountRequest {
+        username: "tech-support".into(),
+        password_hash: "hash".into(),
+        altcha_payload: None,
+        password: None,
+    })
+    .unwrap();
+    let err2 = router
+        .dispatch_api(
+            &settings,
+            &server,
+            "POST",
+            "/api/v1/accounts/custom",
+            Some(&bad_req2),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err2, DeltaChatError::InvalidUsername(_)));
+
+    // 3. Instant prefix collision rejection ("dc_alice")
+    let bad_req3 = serde_json::to_vec(&CustomAccountRequest {
+        username: "dc_alice".into(),
+        password_hash: "hash".into(),
+        altcha_payload: None,
+        password: None,
+    })
+    .unwrap();
+    let err3 = router
+        .dispatch_api(
+            &settings,
+            &server,
+            "POST",
+            "/api/v1/accounts/custom",
+            Some(&bad_req3),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err3, DeltaChatError::InvalidUsername(_)));
+
+    // 4. Custom prefix enforcement rejection ("alice" when custom_prefix = "usr_")
+    settings.custom_prefix_enabled = true;
+    settings.custom_prefix = "usr_".into();
+    let bad_req4 = serde_json::to_vec(&CustomAccountRequest {
+        username: "alice".into(),
+        password_hash: "hash".into(),
+        altcha_payload: None,
+        password: None,
+    })
+    .unwrap();
+    let err4 = router
+        .dispatch_api(
+            &settings,
+            &server,
+            "POST",
+            "/api/v1/accounts/custom",
+            Some(&bad_req4),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err4, DeltaChatError::InvalidUsername(_)));
 }

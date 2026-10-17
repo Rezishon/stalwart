@@ -1360,6 +1360,11 @@ impl EnumImpl for Property {
             b"smtpPort" => Property::SmtpPort,
             b"smtpSecurity" => Property::SmtpSecurity,
             b"certificateChecks" => Property::CertificateChecks,
+            b"instantPrefixEnabled" => Property::InstantPrefixEnabled,
+            b"instantPrefix" => Property::InstantPrefix,
+            b"customPrefixEnabled" => Property::CustomPrefixEnabled,
+            b"customPrefix" => Property::CustomPrefix,
+            b"usernameBlacklist" => Property::UsernameBlacklist,
         }
     }
 
@@ -2315,6 +2320,11 @@ impl EnumImpl for Property {
             Property::SmtpPort => "smtpPort",
             Property::SmtpSecurity => "smtpSecurity",
             Property::CertificateChecks => "certificateChecks",
+            Property::InstantPrefixEnabled => "instantPrefixEnabled",
+            Property::InstantPrefix => "instantPrefix",
+            Property::CustomPrefixEnabled => "customPrefixEnabled",
+            Property::CustomPrefix => "customPrefix",
+            Property::UsernameBlacklist => "usernameBlacklist",
         }
     }
 
@@ -3274,11 +3284,16 @@ impl EnumImpl for Property {
             953 => Some(Property::SmtpPort),
             954 => Some(Property::SmtpSecurity),
             955 => Some(Property::CertificateChecks),
+            956 => Some(Property::InstantPrefixEnabled),
+            957 => Some(Property::InstantPrefix),
+            958 => Some(Property::CustomPrefixEnabled),
+            959 => Some(Property::CustomPrefix),
+            960 => Some(Property::UsernameBlacklist),
             _ => None,
         }
     }
 
-    const COUNT: usize = 956;
+    const COUNT: usize = 961;
 }
 
 impl serde::Serialize for Property {
