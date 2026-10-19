@@ -60,6 +60,9 @@ expect_ok validate_hostname "mail.example.org"
 expect_ok validate_hostname "192.168.1.8"
 expect_fail validate_hostname "-bad"
 expect_fail validate_hostname "has space"
+expect_ok validate_email "admin@mail.example.org"
+expect_fail validate_email "admin"
+expect_fail validate_email "admin@localhost"
 
 expect_ok validate_public_url "https://mail.example.org"
 expect_ok validate_public_url "http://192.168.1.8:8080"
@@ -137,13 +140,13 @@ ok download_url
 # --- paths ---
 eval "$(resolve_paths /usr/local linux)"
 [ "$_bin_dir" = "/usr/local/bin" ] || fail fhs-bin
-[ "$_conf_dir" = "/etc/stalwart" ] || fail fhs-conf
-[ "$_data_dir" = "/var/lib/stalwart" ] || fail fhs-data
-[ "$_log_dir" = "/var/log/stalwart" ] || fail fhs-log
+[ "$_conf_dir" = "/etc/mailiam" ] || fail fhs-conf
+[ "$_data_dir" = "/var/lib/mailiam" ] || fail fhs-data
+[ "$_log_dir" = "/var/log/mailiam" ] || fail fhs-log
 
 eval "$(resolve_paths /usr/local freebsd)"
-[ "$_conf_dir" = "/usr/local/etc/stalwart" ] || fail fbsd-conf
-[ "$_data_dir" = "/var/db/stalwart" ] || fail fbsd-data
+[ "$_conf_dir" = "/usr/local/etc/mailiam" ] || fail fbsd-conf
+[ "$_data_dir" = "/var/db/mailiam" ] || fail fbsd-data
 
 eval "$(resolve_paths /opt/mail linux)"
 [ "$_bin_dir" = "/opt/mail/bin" ] || fail custom-bin
@@ -232,13 +235,13 @@ _tmp2="$(mktemp)"
 cat > "$_tmp2" <<'EOF'
 STALWART_LISTEN_HTTP='0'
 EOF
-[ "$(recovery_port "$_tmp2")" = 8080 ] || fail recovery-zero-http
+[ "$(recovery_port "$_tmp2")" = 80 ] || fail recovery-zero-http
 _tmp3="$(mktemp)"
 cat > "$_tmp3" <<'EOF'
 STALWART_LISTEN_HTTP='18080'
 EOF
 [ "$(recovery_port "$_tmp3")" = 18080 ] || fail recovery-listen-http
-[ "$(recovery_port /no/such/env)" = 8080 ] || fail recovery-missing
+[ "$(recovery_port /no/such/env)" = 80 ] || fail recovery-missing
 
 _hostname_arg=
 _public_url_arg=
@@ -329,6 +332,81 @@ _dc_imap_host=other.example
 set_dc_defaults
 [ "$_dc_imap_host" = other.example ] || fail dc-keep
 ok apply-admin-dc
+
+# --- prompt-flow helpers (spec 2026-10-19) ---
+NO_COLOR=1 init_colors
+[ -z "${CLR_RED}" ] && [ -z "${CLR_BOLD}" ] && [ -z "${CLR_RESET}" ] || fail colors-no-color
+unset NO_COLOR
+TERM=dumb init_colors
+[ -z "${CLR_RED}" ] || fail colors-term-dumb
+ok init_colors
+
+[ "$(hostname_default mail.example.com)" = mail.example.com ] || fail hn-fqdn
+[ "$(hostname_default 58cc45e5c613)" = mail.localhost ] || fail hn-nodot
+[ "$(hostname_default "")" = mail.localhost ] || fail hn-empty
+ok hostname_default
+
+[ "$(tag_from_release_url 'https://github.com/Rezishon/stalwart/releases/tag/v0.16.25-rl1.0.20')" = \
+    v0.16.25-rl1.0.20 ] || fail tag-from-url
+[ "$(tag_from_release_url 'https://github.com/Rezishon/stalwart/releases/latest')" = latest ] || fail tag-latest-url
+ok tag_from_release_url
+
+_hostname=mail.example.com
+_public_url=
+_tls=true
+_listen_https=443
+_listen_http=80
+set_public_url_default
+[ "$_public_url" = 'https://mail.example.com' ] || fail url-https-std
+_public_url=
+_listen_https=8443
+set_public_url_default
+[ "$_public_url" = 'https://mail.example.com:8443' ] || fail url-https-custom
+_public_url=
+_tls=false
+_listen_http=80
+set_public_url_default
+[ "$_public_url" = 'http://mail.example.com' ] || fail url-http-std
+_public_url=
+_listen_http=8080
+set_public_url_default
+[ "$_public_url" = 'http://mail.example.com:8080' ] || fail url-http-custom
+ok set_public_url_default
+
+_hostname=mail.example.com
+_tls=true
+_dc_imap_host= _dc_smtp_host= _dc_imap_port= _dc_smtp_port=
+_dc_imap_security= _dc_smtp_security= _dc_ic=
+_listen_imap=143
+_listen_submissions=465
+_listen_submission=587
+set_dc_defaults
+[ "$_dc_imap_port" = 993 ] || fail dc-tls-imap
+[ "$_dc_smtp_port" = 465 ] || fail dc-tls-smtp
+[ "$_dc_imap_security" = ssl ] || fail dc-tls-imap-sec
+[ "$_dc_smtp_security" = ssl ] || fail dc-tls-smtp-sec
+[ "$_dc_ic" = 3 ] || fail dc-tls-ic
+_tls=false
+_dc_imap_host= _dc_smtp_host= _dc_imap_port= _dc_smtp_port=
+_dc_imap_security= _dc_smtp_security= _dc_ic=
+set_dc_defaults
+[ "$_dc_imap_port" = 143 ] || fail dc-plain-imap
+[ "$_dc_smtp_port" = 587 ] || fail dc-plain-smtp
+[ "$_dc_imap_security" = plain ] || fail dc-plain-imap-sec
+[ "$_dc_smtp_security" = plain ] || fail dc-plain-smtp-sec
+[ "$_dc_ic" = 0 ] || fail dc-plain-ic
+ok set_dc_defaults-tls
+
+_got=$(printf '\n' | { prompt_choice _c 1 3 "Choice [1-3]" >/dev/null; printf '%s\n' "$_c"; })
+[ "$_got" = 1 ] || fail choice-default
+_got=$(printf '2\n' | { prompt_choice _c 1 3 "Choice [1-3]" >/dev/null; printf '%s\n' "$_c"; })
+[ "$_got" = 2 ] || fail choice-2
+_got=$(printf '9\n3\n' | { prompt_choice _c 1 3 "Choice [1-3]" >/dev/null; printf '%s\n' "$_c"; })
+[ "$_got" = 3 ] || fail choice-retry
+ok prompt_choice
+
+print_banner | grep -q 'Welcome to MailiaM.' || fail banner-welcome
+ok print_banner
 
 # --- extract_stalwart (tmpdir only) ---
 _src="$_WORKDIR/src"

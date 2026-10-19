@@ -76,6 +76,15 @@ validate_hostname() {
     return 0
 }
 
+validate_email() {
+    [ -n "$1" ] || return 1
+    contains_cr_lf_or_quote "$1" && return 1
+    case "$1" in
+        *@*.*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 validate_public_url() {
     case "$1" in
         https://?*|http://?*) return 0 ;;
@@ -184,13 +193,13 @@ resolve_paths() {
     fi
     if [ "$_prefix" = /usr/local ]; then
         _bin_dir=/usr/local/bin
-        _log_dir=/var/log/stalwart
+        _log_dir=/var/log/mailiam
         if [ "$_os" = freebsd ]; then
-            _conf_dir=/usr/local/etc/stalwart
-            _data_dir=/var/db/stalwart
+            _conf_dir=/usr/local/etc/mailiam
+            _data_dir=/var/db/mailiam
         else
-            _conf_dir=/etc/stalwart
-            _data_dir=/var/lib/stalwart
+            _conf_dir=/etc/mailiam
+            _data_dir=/var/lib/mailiam
         fi
     else
         _bin_dir="${_prefix}/bin"
@@ -246,7 +255,7 @@ prompt_value() {
     _pv_err="$4"
     _pv_label="$5"
     while :; do
-        prompt_read "${_pv_label} (Default: ${_pv_def}): "
+        prompt_read "$(fmt_prompt "$_pv_label" "$_pv_def")"
         [ -n "$_prompt_ans" ] || _prompt_ans="$_pv_def"
         if "$_pv_fn" "$_prompt_ans"; then
             eval "$_pv_var=\"\$_prompt_ans\""
@@ -262,7 +271,7 @@ prompt_port() {
     _pp_label="$3"
     _pp_nodup="${4:-}"
     while :; do
-        prompt_read "${_pp_label} (Default: ${_pp_def}): "
+        prompt_read "$(fmt_prompt "$_pp_label" "$_pp_def")"
         [ -n "$_prompt_ans" ] || _prompt_ans="$_pp_def"
         if ! validate_port "$_prompt_ans"; then
             printf '%s\n' "Port must be an integer 0-65535."
@@ -287,7 +296,7 @@ prompt_yes_no() {
     _pyn_def="$2"
     _pyn_label="$3"
     while :; do
-        prompt_read "${_pyn_label} (Default: ${_pyn_def}): "
+        prompt_read "$(fmt_prompt "$_pyn_label" "$_pyn_def")"
         [ -n "$_prompt_ans" ] || _prompt_ans="$_pyn_def"
         if validate_yes_no "$_prompt_ans"; then
             eval "$_pyn_var=\"\$_prompt_ans\""
@@ -304,70 +313,575 @@ is_yes() {
     esac
 }
 
+CLR_RED=
+CLR_BOLD=
+CLR_BLUE=
+CLR_DIM=
+CLR_ITALIC=
+CLR_HINT=
+CLR_URL=
+CLR_GREEN=
+CLR_RESET=
+
+init_colors() {
+    if [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = dumb ] || [ ! -t 1 ]; then
+        CLR_RED=
+        CLR_BOLD=
+        CLR_BLUE=
+        CLR_DIM=
+        CLR_ITALIC=
+        CLR_HINT=
+        CLR_URL=
+        CLR_GREEN=
+        CLR_RESET=
+        return 0
+    fi
+    CLR_RED=$(printf '\033[1;31m')
+    CLR_BOLD=$(printf '\033[1m')
+    CLR_BLUE=$(printf '\033[94m')
+    CLR_DIM=$(printf '\033[2m')
+    CLR_ITALIC=$(printf '\033[3m')
+    CLR_HINT=$(printf '\033[2;3m')
+    CLR_URL=$(printf '\033[1;94m')
+    CLR_GREEN=$(printf '\033[1;32m')
+    CLR_RESET=$(printf '\033[0m')
+}
+
+fmt_prompt() {
+    printf '%s%s%s %s(Default: %s)%s: ' \
+        "$CLR_BOLD" "$1" "$CLR_RESET" "$CLR_HINT" "$2" "$CLR_RESET"
+}
+
+say_header() {
+    printf '%s%s%s\n' "$CLR_BOLD" "$1" "$CLR_RESET"
+}
+
+say_hint() {
+    printf '%s%s%s\n' "$CLR_HINT" "$1" "$CLR_RESET"
+}
+
+say_opt() {
+    if [ -n "${3:-}" ]; then
+        printf '  %s%s)%s %s %s(%s)%s\n' \
+            "$CLR_BLUE" "$1" "$CLR_RESET" "$2" "$CLR_HINT" "$3" "$CLR_RESET"
+    else
+        printf '  %s%s)%s %s\n' "$CLR_BLUE" "$1" "$CLR_RESET" "$2"
+    fi
+}
+
+print_hr() {
+    printf '%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' \
+        "$CLR_DIM" "$CLR_RESET"
+}
+
+hostname_default() {
+    case "$1" in
+        *.*) printf '%s\n' "$1" ;;
+        *) printf '%s\n' mail.localhost ;;
+    esac
+}
+
+tag_from_release_url() {
+    case "$1" in
+        */releases/tag/*) printf '%s\n' "${1##*/}" ;;
+        *) printf '%s\n' latest ;;
+    esac
+}
+
+prompt_choice() {
+    _pc_var="$1"
+    _pc_def="$2"
+    _pc_max="$3"
+    _pc_label="$4"
+    while :; do
+        prompt_read "$(fmt_prompt "$_pc_label" "$_pc_def")"
+        [ -n "$_prompt_ans" ] || _prompt_ans="$_pc_def"
+        case "$_prompt_ans" in
+            *[!0-9]*|'') ;;
+            *)
+                if [ "$_prompt_ans" -ge 1 ] && [ "$_prompt_ans" -le "$_pc_max" ]; then
+                    eval "$_pc_var=\"\$_prompt_ans\""
+                    return 0
+                fi
+                ;;
+        esac
+        printf 'Choose 1-%s.\n' "$_pc_max"
+    done
+}
+
 prompt_admin() {
     _pa_keep=0
     [ "${1:-}" = keep ] && _pa_keep=1
-    while :; do
+    say ""
+    say_header "Admin WebUI credentials:"
+    say_hint "Initial administrator account for the web management console (/admin)."
+    say ""
+    say_header "Select admin setup:"
+    if [ "$_pa_keep" -eq 1 ]; then
+        say_opt 1 "Keep existing admin password" "Default"
+        say_opt 2 "Set custom username and password"
+    else
+        say_opt 1 "Auto-generate secure password" "Default: user 'admin'"
+        say_opt 2 "Set custom username and password"
+    fi
+    prompt_choice _pa_choice 1 2 "Choice [1-2]"
+    if [ "$_pa_choice" = 1 ]; then
         if [ "$_pa_keep" -eq 1 ]; then
-            prompt_read "Admin bootstrap credential [username:password or 'random'] (Default: keep existing): "
+            _admin=
         else
-            prompt_read "Admin bootstrap credential [username:password or 'random'] (Default: random): "
-        fi
-        if [ -z "$_prompt_ans" ]; then
-            if [ "$_pa_keep" -eq 1 ]; then
-                _admin=
-                return 0
-            fi
-            _prompt_ans=random
-        fi
-        if [ "$_prompt_ans" = random ]; then
             _admin=random
-            return 0
         fi
+        return 0
+    fi
+    prompt_value _admin_user admin validate_user "Invalid username." "Admin username"
+    while :; do
+        prompt_read "${CLR_BOLD}Admin password${CLR_RESET}: "
         if contains_cr_lf_or_quote "$_prompt_ans"; then
-            printf '%s\n' "Credential must be username:password or 'random'."
+            printf '%s\n' "Password must not contain quotes or newlines."
             continue
         fi
-        case "$_prompt_ans" in
-            *:*) ;;
-            *)
-                printf '%s\n' "Credential must be username:password or 'random'."
-                continue
-                ;;
-        esac
-        _admin_user="${_prompt_ans%%:*}"
-        _admin_pass="${_prompt_ans#*:}"
-        if [ -z "$_admin_user" ] || ! printf '%s' "$_admin_user" | grep -Eq '^[A-Za-z0-9_-]+$'; then
-            printf '%s\n' "Username must be alphanumeric, underscore, or hyphen."
-            continue
-        fi
-        if [ "${#_admin_pass}" -lt 12 ]; then
+        if [ "${#_prompt_ans}" -lt 12 ]; then
             printf '%s\n' "Password must be at least 12 characters."
             continue
         fi
-        _admin="$_prompt_ans"
+        _admin="${_admin_user}:${_prompt_ans}"
         return 0
     done
 }
 
+detect_installed_bin() {
+    if [ -e "${_bin_dir}/mailiam" ]; then
+        printf '%s\n' "${_bin_dir}/mailiam"
+        return 0
+    fi
+    if [ -e "${_bin_dir}/stalwart" ]; then
+        printf '%s\n' "${_bin_dir}/stalwart"
+        return 0
+    fi
+    [ "$_bin_dir" = /usr/local/bin ] || return 1
+    _p=$(command -v mailiam 2>/dev/null) || _p=
+    if [ -n "$_p" ] && [ -e "$_p" ]; then
+        printf '%s\n' "$_p"
+        return 0
+    fi
+    _p=$(command -v stalwart 2>/dev/null) || _p=
+    if [ -n "$_p" ] && [ -e "$_p" ]; then
+        printf '%s\n' "$_p"
+        return 0
+    fi
+    return 1
+}
+
+installed_version() {
+    if [ -x "$1" ]; then
+        "$1" --version 2>/dev/null | awk '{print $NF; exit}'
+    fi
+}
+
+latest_release_tag() {
+    _lr_url=$(curl -sIL -o /dev/null -w '%{url_effective}\n' \
+        "https://github.com/${1}/releases/latest" 2>/dev/null) || _lr_url=
+    [ -n "$_lr_url" ] || { printf '%s\n' latest; return 0; }
+    tag_from_release_url "$_lr_url"
+}
+
 prompt_mode() {
-    say "  1) Update binary only (preserves existing config, env, and database)"
-    say "  2) Reconfigure environment (re-prompts settings and updates stalwart.env)"
-    say "  3) Fresh install (overwrites binary and recreates stalwart.env)"
-    while :; do
-        prompt_read "Existing Stalwart installation detected. Choose action [1-3] (Default: 1): "
-        [ -n "$_prompt_ans" ] || _prompt_ans=1
-        if validate_mode "$_prompt_ans"; then
-            _install_mode="$_prompt_ans"
-            return 0
+    _pm_bin="${1:-$_bin_file}"
+    _pm_ver="$(installed_version "$_pm_bin")"
+    _pm_latest="$(latest_release_tag "${_repo:-Rezishon/stalwart}")"
+    say ""
+    say_header "Current installation detected:"
+    printf '  - Binary:   %s' "$_pm_bin"
+    if [ -n "$_pm_ver" ]; then
+        printf ' %s(version %s)%s' "$CLR_HINT" "$_pm_ver" "$CLR_RESET"
+    fi
+    printf '\n'
+    printf '  - Config:   %s\n' "$_conf_dir"
+    printf '  - Database: %s\n' "$_data_dir"
+    if [ -n "$_pm_latest" ] && [ "$_pm_latest" != latest ] && [ -n "$_pm_ver" ] \
+        && [ "$_pm_latest" != "$_pm_ver" ] && [ "$_pm_latest" != "v${_pm_ver}" ]; then
+        printf '  - Status:   %sUpdate available: %s%s\n' "$CLR_URL" "$_pm_latest" "$CLR_RESET"
+        _pm_opt1="Update binary to ${_pm_latest}"
+    else
+        printf '  - Status:   You are currently running the latest version.\n'
+        _pm_opt1="Update binary"
+        _pm_latest=latest
+    fi
+    say ""
+    say_header "Select action:"
+    say_opt 1 "$_pm_opt1" "Default - keeps config & mail data safe"
+    say_opt 2 "Reconfigure server settings" "Update domain, ports, TLS, or admin"
+    say_opt 3 "Fresh reinstall" "Clean install - resets configuration"
+    prompt_choice _install_mode 1 3 "Choice [1-3]"
+    _update_target="$_pm_latest"
+}
+
+prompt_source() {
+    say ""
+    say_header "Select download source:"
+    say_opt 1 "GitHub repository" "Default: ${_repo:-Rezishon/stalwart}"
+    say_opt 2 "Custom HTTPS URL"
+    say_opt 3 "Local archive file"
+    if [ -n "$_file" ]; then
+        _src_def=3
+    else
+        _src_def=1
+    fi
+    prompt_choice _src_choice "$_src_def" 3 "Choice [1-3]"
+    case "$_src_choice" in
+        1)
+            prompt_value _repo "${_repo:-Rezishon/stalwart}" validate_source \
+                "Invalid download source." "GitHub repository [owner/repo]"
+            _file=
+            ;;
+        2)
+            prompt_value _repo "https://example.com/releases" validate_source \
+                "Invalid download source." "HTTPS URL (e.g. https://example.com/releases)"
+            _file=
+            ;;
+        3)
+            prompt_value _file "${_file:-/path/to/mailiam.tar.gz}" validate_source \
+                "Invalid download source." "Local archive path (e.g. /path/to/mailman.tar.gz)"
+            ;;
+    esac
+}
+
+prompt_paths() {
+    say ""
+    say_header "Installation paths:"
+    printf '  - Binary:  %s\n' "$_bin_file"
+    printf '  - Config:  %s\n' "$_conf_dir"
+    printf '  - Data:    %s\n' "$_data_dir"
+    printf '  - Logs:    %s\n' "$_log_dir"
+    say ""
+    say_header "Select installation path:"
+    say_opt 1 "Standard system paths" "Default"
+    say_opt 2 "Single base path" "e.g. /opt/stalwart"
+    say_opt 3 "Advanced: customize each path"
+    prompt_choice _path_choice 1 3 "Choice [1-3]"
+    case "$_path_choice" in
+        2)
+            prompt_value _prefix /opt/stalwart validate_prefix "Invalid prefix." \
+                "Base directory path"
+            apply_paths
+            ;;
+        3)
+            prompt_value _bin_dir "$_bin_dir" validate_prefix "Invalid path." "Binary directory"
+            prompt_value _conf_dir "$_conf_dir" validate_prefix "Invalid path." "Config directory"
+            prompt_value _data_dir "$_data_dir" validate_prefix "Invalid path." "Data directory"
+            prompt_value _log_dir "$_log_dir" validate_prefix "Invalid path." "Log directory"
+            _bin_file="${_bin_dir}/mailiam"
+            _bin_legacy="${_bin_dir}/stalwart"
+            _config_file="${_conf_dir}/config.json"
+            _env_file="${_conf_dir}/stalwart.env"
+            ;;
+    esac
+}
+
+prompt_hostname_step() {
+    _hn_def="$(hostname_default "$_hostname")"
+    say ""
+    prompt_value _hostname "$_hn_def" validate_hostname "Invalid hostname." \
+        "Server hostname (FQDN)"
+    say_hint "Primary domain for SMTP HELO, TLS certificates, and DeltaChat discovery."
+    say_hint "Note: You can easily change this later in the WebUI admin dashboard."
+}
+
+prompt_ports() {
+    say ""
+    say_header "Network listener ports:"
+    printf '  - SMTP:         %-6s %s(Mail delivery)%s\n' "$_listen_smtp" "$CLR_HINT" "$CLR_RESET"
+    printf '  - Submission:   %-6s %s(Client send, STARTTLS)%s\n' "$_listen_submission" "$CLR_HINT" "$CLR_RESET"
+    printf '  - SMTPS:        %-6s %s(Client send, TLS)%s\n' "$_listen_submissions" "$CLR_HINT" "$CLR_RESET"
+    printf '  - IMAP:         %-6s %s(Mail access)%s\n' "$_listen_imap" "$CLR_HINT" "$CLR_RESET"
+    printf '  - POP3:         %-6s %s(Legacy access)%s\n' "$_listen_pop3" "$CLR_HINT" "$CLR_RESET"
+    printf '  - ManageSieve:  %-6s %s(Mail filtering)%s\n' "$_listen_sieve" "$CLR_HINT" "$CLR_RESET"
+    printf '  - HTTP:         %-6s %s(Web / ACME challenges)%s\n' "$_listen_http" "$CLR_HINT" "$CLR_RESET"
+    printf '  - HTTPS:        %-6s %s(Relay SPA / WebUI / JMAP)%s\n' "$_listen_https" "$CLR_HINT" "$CLR_RESET"
+    say ""
+    say_header "Select port configuration:"
+    say_opt 1 "Use standard ports" "Default"
+    say_opt 2 "Advanced: customize individual ports"
+    prompt_choice _port_choice 1 2 "Choice [1-2]"
+    if [ "$_port_choice" = 2 ]; then
+        _used_ports=
+        prompt_port _listen_smtp "$_listen_smtp" "SMTP port"
+        prompt_port _listen_submission "$_listen_submission" "Submission port"
+        prompt_port _listen_submissions "$_listen_submissions" "SMTPS port"
+        prompt_port _listen_imap "$_listen_imap" "IMAP port"
+        prompt_port _listen_pop3 "$_listen_pop3" "POP3 port"
+        prompt_port _listen_sieve "$_listen_sieve" "ManageSieve port"
+        prompt_port _listen_http "$_listen_http" "HTTP port"
+        prompt_port _listen_https "$_listen_https" "HTTPS port"
+    fi
+}
+
+prompt_tls() {
+    say ""
+    say_header "TLS / SSL encryption:"
+    say_opt 1 "Automatic Let's Encrypt (ACME)" "Default"
+    say_opt 2 "Custom certificate files" "Path to .crt and .key"
+    say_opt 3 "Disabled / Plaintext" "Only if behind reverse proxy"
+    prompt_choice _tls_choice 1 3 "Choice [1-3]"
+    case "$_tls_choice" in
+        1)
+            _tls=true
+            _tls_mode="Automatic Let's Encrypt (ACME)"
+            prompt_value _acme_email "admin@${_hostname}" validate_email \
+                "Invalid email." "ACME contact email"
+            ;;
+        2)
+            _tls=true
+            _tls_mode="Custom certificate files"
+            prompt_value _tls_cert /etc/ssl/certs/fullchain.pem validate_prefix \
+                "Invalid path." "TLS certificate path"
+            prompt_value _tls_key /etc/ssl/private/privkey.pem validate_prefix \
+                "Invalid path." "TLS private key path"
+            ;;
+        3)
+            _tls=false
+            _tls_mode="Disabled / Plaintext"
+            ;;
+    esac
+}
+
+dc_ic_label() {
+    case "$1" in
+        3) printf '%s\n' "Strict" ;;
+        1) printf '%s\n' "Accept invalid" ;;
+        *) printf '%s\n' "Disabled" ;;
+    esac
+}
+
+dc_sec_label() {
+    case "$1" in
+        ssl) printf '%s\n' "SSL/TLS" ;;
+        starttls) printf '%s\n' "STARTTLS" ;;
+        *) printf '%s\n' "Plain" ;;
+    esac
+}
+
+prompt_dc() {
+    set_dc_defaults
+    say ""
+    say_header "DeltaChat autoconfig endpoints:"
+    printf '  - IMAP:        %s:%s %s(%s)%s\n' \
+        "$_dc_imap_host" "$_dc_imap_port" "$CLR_HINT" "$(dc_sec_label "$_dc_imap_security")" "$CLR_RESET"
+    printf '  - SMTP:        %s:%s %s(%s)%s\n' \
+        "$_dc_smtp_host" "$_dc_smtp_port" "$CLR_HINT" "$(dc_sec_label "$_dc_smtp_security")" "$CLR_RESET"
+    printf '  - Cert checks: %s %s(Automatic)%s\n' \
+        "$(dc_ic_label "$_dc_ic")" "$CLR_HINT" "$CLR_RESET"
+    say ""
+    say_header "Configure DeltaChat endpoints:"
+    say_opt 1 "Use server defaults" "Default"
+    say_opt 2 "Advanced: customize DeltaChat endpoints"
+    prompt_choice _dc_choice 1 2 "Choice [1-2]"
+    if [ "$_dc_choice" = 2 ]; then
+        prompt_value _dc_imap_host "$_dc_imap_host" validate_hostname "Invalid hostname." \
+            "DeltaChat IMAP host"
+        prompt_port _dc_imap_port "$_dc_imap_port" "DeltaChat IMAP port" nodup
+        prompt_value _dc_imap_security "$_dc_imap_security" validate_dc_security \
+            "Invalid DeltaChat security." "DeltaChat IMAP security [ssl/starttls/default/plain]"
+        prompt_value _dc_smtp_host "$_dc_smtp_host" validate_hostname "Invalid hostname." \
+            "DeltaChat SMTP host"
+        prompt_port _dc_smtp_port "$_dc_smtp_port" "DeltaChat SMTP port" nodup
+        prompt_value _dc_smtp_security "$_dc_smtp_security" validate_dc_security \
+            "Invalid DeltaChat security." "DeltaChat SMTP security [ssl/starttls/default/plain]"
+        prompt_value _dc_ic "$_dc_ic" validate_dc_ic "Invalid DeltaChat ic." \
+            "DeltaChat certificate checks [0/1/3]"
+    fi
+}
+
+prompt_public_url_step() {
+    set_public_url_default
+    say ""
+    prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
+        "Public web URL"
+    say_hint "Web address for admin panel (/admin), user web portal, and DeltaChat invite links."
+    say_hint "Press Enter to match mail hostname, or enter custom URL (e.g. https://yourdomain.com)."
+}
+
+print_box_title() {
+    print_hr
+    printf '%s%s%s\n' "$CLR_BOLD" "$1" "$CLR_RESET"
+    print_hr
+}
+
+src_display() {
+    if [ -n "$_file" ]; then
+        printf '%s\n' "$_file"
+    else
+        printf '%s (%s)\n' "$_repo" "$_version"
+    fi
+}
+
+print_install_summary() {
+    say ""
+    print_box_title "                    MailiaM Installation Summary"
+    printf '  Download Source:   %s\n' "$(src_display)"
+    printf '  Install Base:      %s (Binary: %s)\n' "$_prefix" "$_bin_file"
+    printf '  Service User:      %s (unprivileged)\n' "$_account"
+    printf '  Server Hostname:   %s\n' "$_hostname"
+    printf '  Web URL:           %s%s%s\n' "$CLR_URL" "$_public_url" "$CLR_RESET"
+    say ""
+    say_header "  Active Listeners:"
+    printf '    - SMTP (MTA):    Port %s\n' "$_listen_smtp"
+    printf '    - Submission:    Port %s (STARTTLS)\n' "$_listen_submission"
+    printf '    - SMTPS:         Port %s (Implicit TLS)\n' "$_listen_submissions"
+    printf '    - IMAP:          Port %s\n' "$_listen_imap"
+    printf '    - ManageSieve:   Port %s\n' "$_listen_sieve"
+    printf '    - Web (HTTP):    Port %s\n' "$_listen_http"
+    printf '    - Web (HTTPS):   Port %s\n' "$_listen_https"
+    say ""
+    printf '  %sTLS / SSL:%s         %s\n' "$CLR_BOLD" "$CLR_RESET" "${_tls_mode:-$_tls}"
+    say ""
+    say_header "  DeltaChat Config:"
+    printf '    - Web & Relay:   %s/\n' "$_public_url"
+    printf '    - IMAP Server:   %s:%s (%s)\n' "$_dc_imap_host" "$_dc_imap_port" "$(dc_sec_label "$_dc_imap_security")"
+    printf '    - SMTP Server:   %s:%s (%s)\n' "$_dc_smtp_host" "$_dc_smtp_port" "$(dc_sec_label "$_dc_smtp_security")"
+    printf '    - Cert Checks:   %s (ic=%s)\n' "$(dc_ic_label "$_dc_ic")" "$_dc_ic"
+    say ""
+    if [ "$_admin" = random ] || [ -z "${_admin:-}" ]; then
+        printf '  %sAdmin Account:%s     admin (secure random password generated on boot)\n' \
+            "$CLR_BOLD" "$CLR_RESET"
+    else
+        printf '  %sAdmin Account:%s     %s (custom password)\n' \
+            "$CLR_BOLD" "$CLR_RESET" "${_admin%%:*}"
+    fi
+    if [ "${_SKIP_START:-0}" -eq 0 ]; then
+        printf '  %sService Start:%s     Yes (systemd auto-start enabled)\n' "$CLR_BOLD" "$CLR_RESET"
+    else
+        printf '  %sService Start:%s     No\n' "$CLR_BOLD" "$CLR_RESET"
+    fi
+    print_hr
+}
+
+print_update_summary() {
+    say ""
+    print_box_title "                    MailiaM Binary Update Summary"
+    printf '  Current Binary:    %s' "${_existing_bin:-$_bin_file}"
+    _uv="$(installed_version "${_existing_bin:-$_bin_file}")"
+    if [ -n "$_uv" ]; then
+        printf ' %s(version %s)%s' "$CLR_HINT" "$_uv" "$CLR_RESET"
+    fi
+    printf '\n'
+    printf '  Target Version:    %s %s(from %s)%s\n' \
+        "$_version" "$CLR_HINT" "${_file:-$_repo}" "$CLR_RESET"
+    printf '  Config & Env:      %sPreserved%s %s(%s)%s\n' \
+        "$CLR_GREEN" "$CLR_RESET" "$CLR_HINT" "$_conf_dir" "$CLR_RESET"
+    printf '  Mail Database:     %sPreserved%s %s(%s)%s\n' \
+        "$CLR_GREEN" "$CLR_RESET" "$CLR_HINT" "$_data_dir" "$CLR_RESET"
+    if [ "${_SKIP_START:-0}" -eq 0 ]; then
+        printf '  Service Action:    Restart mailiam service\n'
+    else
+        printf '  Service Action:    Leave service stopped\n'
+    fi
+    print_hr
+}
+
+print_install_success() {
+    if [ -n "${_admin:-}" ] && [ "$_admin" != random ]; then
+        _pw_user="${_admin%%:*}"
+        _pw="${_admin#*:}"
+    else
+        _pw_user=admin
+        _pw="(generated at first boot — see service logs)"
+    fi
+    say ""
+    print_box_title "                  MailiaM Installed Successfully"
+    say ""
+    say_header "  Admin Web Console:"
+    printf '    URL:             %s%s/admin%s\n' "$CLR_URL" "$_public_url" "$CLR_RESET"
+    printf '    Username:        %s\n' "$_pw_user"
+    printf '    Password:        %s%s%s\n' "$CLR_GREEN" "$_pw" "$CLR_RESET"
+    say ""
+    say_header "  User Portal & Web Apps:"
+    printf '    DeltaChat Relay: %s%s/%s\n' "$CLR_URL" "$_public_url" "$CLR_RESET"
+    printf '    User Account:    %s%s/account%s\n' "$CLR_URL" "$_public_url" "$CLR_RESET"
+    say ""
+    say_header "  Useful Commands:"
+    printf '    Check status:    %ssystemctl status mailiam%s\n' "$CLR_HINT" "$CLR_RESET"
+    printf '    View live logs:  %sjournalctl -u mailiam -f%s\n' "$CLR_HINT" "$CLR_RESET"
+    printf '    Config file:     %s\n' "$_env_file"
+    say ""
+    print_hr
+}
+
+print_update_success() {
+    _uv="$(installed_version "$_bin_file")"
+    [ -n "$_uv" ] || _uv="$_version"
+    say ""
+    print_box_title "                    MailiaM Updated Successfully"
+    say ""
+    printf '  %sInstalled Version:%s  %s%s%s\n' "$CLR_BOLD" "$CLR_RESET" "$CLR_URL" "$_uv" "$CLR_RESET"
+    printf '  %sBinary Path:%s        %s\n' "$CLR_BOLD" "$CLR_RESET" "$_bin_file"
+    printf '  %sService Status:%s     updated\n' "$CLR_BOLD" "$CLR_RESET"
+    say ""
+    say_header "  Useful Commands:"
+    printf '    Check status:    %ssystemctl status mailiam%s\n' "$CLR_HINT" "$CLR_RESET"
+    printf '    View live logs:  %sjournalctl -u mailiam -f%s\n' "$CLR_HINT" "$CLR_RESET"
+    say ""
+    print_hr
+}
+
+confirm_or_abort() {
+    say ""
+    prompt_yes_no _go Y "$1"
+    if ! is_yes "$_go"; then
+        say "Aborted. No changes were made."
+        exit 0
+    fi
+}
+
+ensure_bin_symlink() {
+    if [ -n "${_bin_legacy:-}" ] && [ "$_bin_legacy" != "$_bin_file" ]; then
+        if [ -e "$_bin_legacy" ] && [ ! -L "$_bin_legacy" ]; then
+            if [ ! -e "$_bin_file" ]; then
+                mv "$_bin_legacy" "$_bin_file"
+            else
+                rm -f "$_bin_legacy"
+            fi
         fi
-        printf '%s\n' "Choose 1, 2, or 3."
-    done
+        ln -sfn mailiam "$_bin_legacy"
+    fi
+}
+
+ensure_conf_symlink() {
+    [ "$_prefix" = /usr/local ] || return 0
+    if [ "$_os" = freebsd ]; then
+        _legacy_conf=/usr/local/etc/stalwart
+    else
+        _legacy_conf=/etc/stalwart
+    fi
+    if [ ! -e "$_legacy_conf" ]; then
+        ln -sfn mailiam "$_legacy_conf"
+    fi
+}
+
+adopt_existing_layout() {
+    [ "$_prefix" = /usr/local ] || return 0
+    [ -d "$_conf_dir" ] && return 0
+    if [ "$_os" = freebsd ]; then
+        _old_conf=/usr/local/etc/stalwart
+        _old_data=/var/db/stalwart
+    else
+        _old_conf=/etc/stalwart
+        _old_data=/var/lib/stalwart
+    fi
+    _old_log=/var/log/stalwart
+    if [ -d "$_old_conf" ] && [ ! -L "$_old_conf" ]; then
+        _conf_dir="$_old_conf"
+        [ -d "$_old_data" ] && _data_dir="$_old_data"
+        [ -d "$_old_log" ] && _log_dir="$_old_log"
+        _config_file="${_conf_dir}/config.json"
+        _env_file="${_conf_dir}/stalwart.env"
+    fi
 }
 
 apply_paths() {
     eval "$(resolve_paths "$_prefix" "$_os")" || err "Invalid prefix: $_prefix"
-    _bin_file="${_bin_dir}/stalwart"
+    _bin_file="${_bin_dir}/mailiam"
+    _bin_legacy="${_bin_dir}/stalwart"
     _config_file="${_conf_dir}/config.json"
     _env_file="${_conf_dir}/stalwart.env"
 }
@@ -438,8 +952,17 @@ read_env_key() {
 }
 
 set_public_url_default() {
-    if [ -z "$_public_url" ]; then
-        if [ "$_listen_https" != 443 ] && [ -n "$_listen_https" ]; then
+    if [ -n "$_public_url" ]; then
+        return 0
+    fi
+    if [ "$_tls" = false ] || [ "$_tls" = 0 ]; then
+        if [ -n "$_listen_http" ] && [ "$_listen_http" != 80 ]; then
+            _public_url="http://${_hostname}:${_listen_http}"
+        else
+            _public_url="http://${_hostname}"
+        fi
+    else
+        if [ -n "$_listen_https" ] && [ "$_listen_https" != 443 ]; then
             _public_url="https://${_hostname}:${_listen_https}"
         else
             _public_url="https://${_hostname}"
@@ -472,8 +995,19 @@ seed_mode2_from_env() {
 set_dc_defaults() {
     [ -n "$_dc_imap_host" ] || _dc_imap_host="$_hostname"
     [ -n "$_dc_smtp_host" ] || _dc_smtp_host="$_hostname"
-    [ -n "$_dc_imap_port" ] || _dc_imap_port="$_listen_imap"
-    [ -n "$_dc_smtp_port" ] || _dc_smtp_port="$_listen_submissions"
+    if [ "$_tls" = false ] || [ "$_tls" = 0 ]; then
+        [ -n "$_dc_imap_port" ] || _dc_imap_port=143
+        [ -n "$_dc_smtp_port" ] || _dc_smtp_port=587
+        [ -n "$_dc_imap_security" ] || _dc_imap_security=plain
+        [ -n "$_dc_smtp_security" ] || _dc_smtp_security=plain
+        [ -n "$_dc_ic" ] || _dc_ic=0
+    else
+        [ -n "$_dc_imap_port" ] || _dc_imap_port=993
+        [ -n "$_dc_smtp_port" ] || _dc_smtp_port=465
+        [ -n "$_dc_imap_security" ] || _dc_imap_security=ssl
+        [ -n "$_dc_smtp_security" ] || _dc_smtp_security=ssl
+        [ -n "$_dc_ic" ] || _dc_ic=3
+    fi
 }
 
 extract_stalwart() {
@@ -531,6 +1065,7 @@ install_binary() {
     fi
     ensure chmod 0755 "$_bin_file"
     ensure chown root:root "$_bin_file"
+    ensure_bin_symlink
     rm -rf "$_tmp"
 }
 
@@ -548,10 +1083,10 @@ recovery_port() {
             printf '%s\n' "$_rp"
             return 0
         fi
-        printf '%s\n' 8080
+        printf '%s\n' 80
         return 0
     fi
-    printf '%s\n' 8080
+    printf '%s\n' 80
 }
 
 main() {
@@ -566,19 +1101,23 @@ main() {
     _listen_smtp=25
     _listen_submission=587
     _listen_submissions=465
-    _listen_imap=993
-    _listen_pop3=995
+    _listen_imap=143
+    _listen_pop3=110
     _listen_sieve=4190
     _listen_https=443
-    _listen_http=8080
+    _listen_http=80
     _tls=true
+    _tls_mode="Automatic Let's Encrypt (ACME)"
+    _acme_email=
+    _tls_cert=
+    _tls_key=
     _dc_imap_host=""
     _dc_imap_port=""
-    _dc_imap_security=ssl
+    _dc_imap_security=""
     _dc_smtp_host=""
     _dc_smtp_port=""
-    _dc_smtp_security=ssl
-    _dc_ic=3
+    _dc_smtp_security=""
+    _dc_ic=""
     _admin=
 
     while [ $# -gt 0 ]; do
@@ -771,13 +1310,14 @@ main() {
     if [ -t 0 ] && [ "$_yes" -eq 0 ] && [ "$_update" -eq 0 ]; then
         _interactive=1
     fi
+    init_colors
 
     need_cmd uname
     need_cmd hostname
     _uname="$(uname)"
     case "$_uname" in
-        Linux)   _os="linux"; [ -n "$_account" ] || _account="stalwart" ;;
-        FreeBSD) _os="freebsd"; [ -n "$_account" ] || _account="stalwart" ;;
+        Linux)   _os="linux"; [ -n "$_account" ] || _account="mailiam" ;;
+        FreeBSD) _os="freebsd"; [ -n "$_account" ] || _account="mailiam" ;;
         *)       err "❌ Install failed: Unsupported OS: $_uname" ;;
     esac
 
@@ -795,8 +1335,12 @@ main() {
     fi
 
     [ -n "$_prefix" ] || _prefix=/usr/local
-    [ -n "$_hostname" ] || _hostname="$(hostname -f 2>/dev/null || hostname || printf '%s\n' mail.local)"
+    if [ -z "$_hostname" ]; then
+        _hostname="$(hostname -f 2>/dev/null || hostname || printf '%s\n' mail.localhost)"
+        _hostname="$(hostname_default "$_hostname")"
+    fi
     apply_paths
+    adopt_existing_layout
 
     _target="$(artifact_target "$_uname" "$(uname -m)")" || err "❌ Install failed: Unsupported OS or architecture."
 
@@ -805,120 +1349,90 @@ main() {
     fi
 
     _install_mode=0
+    _existing_bin=$(detect_installed_bin) || _existing_bin=
     if [ "$_update" -eq 1 ]; then
         _install_mode=1
-    elif [ -e "$_bin_file" ]; then
+    elif [ -n "$_existing_bin" ]; then
         if [ "$_yes" -eq 1 ]; then
             _install_mode=1
         else
-            prompt_mode
+            prompt_mode "$_existing_bin"
         fi
     fi
 
     if [ "$_interactive" -eq 1 ]; then
         if [ "$_install_mode" -eq 0 ]; then
-            say "Fresh install. No existing binary at ${_bin_file}."
+            printf '%sFresh install. No existing binary found at %s.%s\n' \
+                "$CLR_DIM" "${_bin_legacy:-$_bin_file}" "$CLR_RESET"
             say ""
         fi
+
         if [ "$_install_mode" -ne 2 ]; then
-            _src_def="${_file:-$_repo}"
-            say "  GitHub:  owner/repo"
-            say "  HTTPS:   https://example.com/releases"
-            say "  Local:   /path/to/stalwart.tar.gz"
-            prompt_value _src_ans "$_src_def" validate_source "Invalid download source." \
-                "Download source"
-            apply_source "$_src_ans"
+            prompt_source
             if [ -z "$_file" ]; then
-                prompt_value _version "$_version" validate_version "Invalid version." "Release tag"
+                if [ "$_install_mode" -eq 1 ]; then
+                    _ver_label="Release version to install"
+                else
+                    _ver_label="Release version"
+                fi
+                prompt_value _version "$_version" validate_version "Invalid version." \
+                    "$_ver_label"
             fi
         fi
 
-        if [ "$_install_mode" -ne 1 ]; then
-            if [ "$_install_mode" -ne 2 ]; then
-                if [ "$_prefix" = /usr/local ]; then
-                    _pfx_label="Installation prefix"
-                    _pfx_def="/usr/local [Standard FHS]"
-                    while :; do
-                        prompt_read "${_pfx_label} (Default: ${_pfx_def}): "
-                        [ -n "$_prompt_ans" ] || _prompt_ans=/usr/local
-                        if validate_prefix "$_prompt_ans"; then
-                            _prefix="$_prompt_ans"
-                            break
-                        fi
-                        printf '%s\n' "Invalid prefix."
-                    done
+        if [ "$_install_mode" -eq 1 ]; then
+            if [ "$_no_start" -eq 0 ]; then
+                prompt_yes_no _start_ans Y "Restart MailiaM service after update? [Y/n]"
+                if is_yes "$_start_ans"; then
+                    _SKIP_START=0
                 else
-                    prompt_value _prefix "$_prefix" validate_prefix "Invalid prefix." \
-                        "Installation prefix"
+                    _SKIP_START=1
                 fi
-                apply_paths
-                prompt_value _account "$_account" validate_user "Invalid user." "System user account"
-            fi
-            if [ "$_install_mode" -eq 2 ]; then
-                seed_mode2_from_env
-            fi
-            prompt_value _hostname "$_hostname" validate_hostname "Invalid hostname." "Server hostname"
-
-            if [ "$_install_mode" -eq 2 ]; then
-                set_public_url_default
-                prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
-                    "Public base URL"
-                prompt_admin keep
-            else
-                _used_ports=
-                for _spec in \
-                    '_listen_smtp|SMTP port' \
-                    '_listen_submission|Submission port' \
-                    '_listen_submissions|Submissions (SMTPS) port' \
-                    '_listen_imap|IMAP port' \
-                    '_listen_pop3|POP3 port' \
-                    '_listen_sieve|ManageSieve port' \
-                    '_listen_https|HTTPS port' \
-                    '_listen_http|HTTP port'
-                do
-                    _pp_var="${_spec%%|*}"
-                    _pp_label="${_spec#*|}"
-                    eval "_pp_def=\$${_pp_var}"
-                    prompt_port "$_pp_var" "$_pp_def" "$_pp_label"
-                done
-
-                prompt_yes_no _tls_ans Y "Enable TLS on listeners? [Y/n]"
-                if is_yes "$_tls_ans"; then
-                    _tls=true
-                else
-                    _tls=false
-                fi
-
-                set_dc_defaults
-                prompt_value _dc_imap_host "$_dc_imap_host" validate_hostname "Invalid hostname." \
-                    "DeltaChat IMAP host"
-                prompt_port _dc_imap_port "$_dc_imap_port" "DeltaChat IMAP port" nodup
-                prompt_value _dc_imap_security "$_dc_imap_security" validate_dc_security \
-                    "Invalid DeltaChat security." "DeltaChat IMAP security [ssl/starttls/default/plain]"
-                prompt_value _dc_smtp_host "$_dc_smtp_host" validate_hostname "Invalid hostname." \
-                    "DeltaChat SMTP host"
-                prompt_port _dc_smtp_port "$_dc_smtp_port" "DeltaChat SMTP port" nodup
-                prompt_value _dc_smtp_security "$_dc_smtp_security" validate_dc_security \
-                    "Invalid DeltaChat security." "DeltaChat SMTP security [ssl/starttls/default/plain]"
-                prompt_value _dc_ic "$_dc_ic" validate_dc_ic "Invalid DeltaChat ic." \
-                    "DeltaChat certificate checks [0/1/3]"
-
-                set_public_url_default
-                prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
-                    "Public base URL"
-                prompt_admin
-            fi
-        fi
-
-        if [ "$_no_start" -eq 0 ]; then
-            prompt_yes_no _start_ans Y "Enable and start service now? [Y/n]"
-            if is_yes "$_start_ans"; then
-                _SKIP_START=0
             else
                 _SKIP_START=1
             fi
+            print_update_summary
+            confirm_or_abort "Proceed with update? [Y/n]"
+        elif [ "$_install_mode" -eq 2 ]; then
+            seed_mode2_from_env
+            prompt_hostname_step
+            prompt_public_url_step
+            prompt_admin keep
+            if [ "$_no_start" -eq 0 ]; then
+                prompt_yes_no _start_ans Y "Enable and start MailiaM service now? [Y/n]"
+                if is_yes "$_start_ans"; then
+                    _SKIP_START=0
+                else
+                    _SKIP_START=1
+                fi
+            else
+                _SKIP_START=1
+            fi
+            confirm_or_abort "Proceed with reconfigure? [Y/n]"
         else
-            _SKIP_START=1
+            prompt_paths
+            prompt_value _account "$_account" validate_user "Invalid user." \
+                "MailiaM user account"
+            say_hint "Dedicated unprivileged user for daemon and file permissions. Created automatically if missing."
+            prompt_hostname_step
+            prompt_ports
+            prompt_tls
+            prompt_dc
+            prompt_public_url_step
+            prompt_admin
+            if [ "$_no_start" -eq 0 ]; then
+                prompt_yes_no _start_ans Y "Enable and start MailiaM service now? [Y/n]"
+                if is_yes "$_start_ans"; then
+                    _SKIP_START=0
+                else
+                    _SKIP_START=1
+                fi
+                say_hint "Registers system service (systemd/initd/rcd) and starts MailiaM automatically on boot."
+            else
+                _SKIP_START=1
+            fi
+            print_install_summary
+            confirm_or_abort "Proceed with installation? [Y/n]"
         fi
     else
         set_public_url_default
@@ -932,6 +1446,7 @@ main() {
 
     create_account "$_os" "$_account"
     ensure mkdir -p "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir"
+    ensure_conf_symlink
 
     if [ "$_install_mode" -ne 2 ]; then
         install_binary "$_target"
@@ -963,59 +1478,28 @@ main() {
         ensure chmod 0640 "$_env_file"
     fi
 
-    local _service_type=""
     case "$_os" in
         linux)
             if check_cmd systemctl; then
                 create_service_linux_systemd "$_bin_file" "$_config_file" "$_env_file" "$_account"
-                _service_type="systemd"
             else
                 create_service_linux_initd "$_bin_file" "$_config_file" "$_env_file" "$_account"
-                _service_type="initd"
             fi
             ;;
         freebsd)
             create_service_freebsd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
-            _service_type="rcd"
             ;;
     esac
 
-    say ""
-    say "Installation complete!"
-    say ""
     case "$_install_mode" in
-        1)
-            say "Binary updated. Existing config, env, and database were left unchanged."
-            ;;
+        1) print_update_success ;;
         2)
+            say ""
             say "Environment updated at ${_env_file}."
+            say ""
             ;;
-        *)
-            _recovery_port="$(recovery_port "$_env_file")"
-            say "Stalwart is running in bootstrap mode. A temporary administrator"
-            say "password was generated at startup and printed to the service logs."
-            say ""
-            say "To find the password, inspect the service logs:"
-            case "$_service_type" in
-                systemd)
-                    say "     journalctl -u stalwart -n 200 | grep -A8 'bootstrap mode'"
-                    ;;
-                initd)
-                    say "     grep -A8 'bootstrap mode' /var/log/syslog 2>/dev/null \\"
-                    say "       || grep -A8 'bootstrap mode' /var/log/messages"
-                    ;;
-                rcd)
-                    say "     grep -A8 'bootstrap mode' ${_log_dir}/stalwart.log"
-                    ;;
-            esac
-            say ""
-            say "   Or set STALWART_RECOVERY_ADMIN=admin:<password> in"
-            say "   ${_env_file} and restart the service to pin a credential."
-            say ""
-            say "   Finish setup at: http://${_hostname}:${_recovery_port}/admin"
-            ;;
+        *) print_install_success ;;
     esac
-    say ""
 
     return 0
 }
@@ -1033,18 +1517,18 @@ Options:
   --version <tag>               Release tag (default: latest)
   --file <path>                 Local .tar.gz archive
   --prefix <path>               Installation prefix
-  --user <name>                 Service account (default: stalwart)
+  --user <name>                 Service account (default: mailiam)
   --hostname <host>             STALWART_HOSTNAME
   --public-url <url>            STALWART_PUBLIC_URL
   --admin <user:pass>           Custom admin; omit for random
   --smtp-port <n>               STALWART_LISTEN_SMTP (default: 25)
   --submission-port <n>         STALWART_LISTEN_SUBMISSION (default: 587)
   --submissions-port <n>        STALWART_LISTEN_SUBMISSIONS (default: 465)
-  --imap-port <n>               STALWART_LISTEN_IMAP (default: 993)
-  --pop3-port <n>               STALWART_LISTEN_POP3 (default: 995)
+  --imap-port <n>               STALWART_LISTEN_IMAP (default: 143)
+  --pop3-port <n>               STALWART_LISTEN_POP3 (default: 110)
   --sieve-port <n>              STALWART_LISTEN_SIEVE (default: 4190)
   --https-port <n>              STALWART_LISTEN_HTTPS (default: 443)
-  --http-port <n>               STALWART_LISTEN_HTTP (default: 8080)
+  --http-port <n>               STALWART_LISTEN_HTTP (default: 80)
   --tls / --no-tls              STALWART_TLS=true / false (default: --tls)
   --dc-imap-host <host>         STALWART_DC_IMAP_HOST
   --dc-imap-port <n>            STALWART_DC_IMAP_PORT
@@ -1059,15 +1543,15 @@ Options:
 PREFIX may also be given as a single positional argument. If both are
 given, the last --prefix wins. Extra positionals are an error.
 
-With no PREFIX, Stalwart is installed under standard FHS paths:
-  binary   /usr/local/bin/stalwart
-  config   /etc/stalwart/config.json      (/usr/local/etc/stalwart/config.json on FreeBSD)
-  env      /etc/stalwart/stalwart.env     (/usr/local/etc/stalwart/stalwart.env on FreeBSD)
-  logs     /var/log/stalwart/
-  data     /var/lib/stalwart/             (/var/db/stalwart on FreeBSD)
+With no PREFIX, MailiaM is installed under standard FHS paths:
+  binary   /usr/local/bin/mailiam          (stalwart symlink for compatibility)
+  config   /etc/mailiam/config.json        (/usr/local/etc/mailiam/config.json on FreeBSD)
+  env      /etc/mailiam/stalwart.env       (/usr/local/etc/mailiam/stalwart.env on FreeBSD)
+  logs     /var/log/mailiam/
+  data     /var/lib/mailiam/               (/var/db/mailiam on FreeBSD)
 
 When PREFIX is provided, a self-contained layout is used instead:
-  binary   $PREFIX/bin/stalwart
+  binary   $PREFIX/bin/mailiam
   config   $PREFIX/etc/config.json
   env      $PREFIX/etc/stalwart.env
   logs     $PREFIX/logs/
@@ -1159,9 +1643,9 @@ create_account() {
     if id -u "$_account" > /dev/null 2>&1; then
         return 0
     fi
-    say "🖥️  Creating '${_account}' account..."
+    say "Creating '${_account}' account..."
     if [ "$_os" = "freebsd" ]; then
-        ensure pw useradd -n "$_account" -c "Stalwart service" -d /nonexistent -s /usr/sbin/nologin -w no
+        ensure pw useradd -n "$_account" -c "MailiaM service" -d /nonexistent -s /usr/sbin/nologin -w no
     else
         ensure useradd "$_account" -s /usr/sbin/nologin -M -r -U
     fi
@@ -1169,10 +1653,10 @@ create_account() {
 
 create_service_linux_systemd() {
     local _bin="$1" _config="$2" _env="$3" _user="$4"
-    cat > /etc/systemd/system/stalwart.service <<EOF
+    cat > /etc/systemd/system/mailiam.service <<EOF
 [Unit]
-Description=Stalwart
-Conflicts=postfix.service sendmail.service exim4.service
+Description=MailiaM
+Conflicts=postfix.service sendmail.service exim4.service stalwart.service
 After=network-online.target
 
 [Service]
@@ -1184,7 +1668,7 @@ Restart=on-failure
 RestartSec=5
 EnvironmentFile=-${_env}
 ExecStart=${_bin} --config=${_config}
-SyslogIdentifier=stalwart
+SyslogIdentifier=mailiam
 User=${_user}
 Group=${_user}
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -1193,25 +1677,26 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable stalwart.service
+    systemctl enable mailiam.service
     if [ "${_SKIP_START:-0}" -eq 0 ]; then
-        systemctl restart stalwart.service
+        systemctl restart mailiam.service
     fi
 }
 
 create_service_linux_initd() {
     local _bin="$1" _config="$2" _env="$3" _user="$4"
-    cat > /etc/init.d/stalwart <<EOF
+    mkdir -p /etc/init.d
+    cat > /etc/init.d/mailiam <<EOF
 #!/bin/sh
 ### BEGIN INIT INFO
-# Provides:          stalwart
+# Provides:          mailiam
 # Required-Start:    \$network
 # Required-Stop:     \$network
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: Stalwart Server
-# Description:       Starts and stops the Stalwart Server
-# Conflicts:         postfix sendmail
+# Short-Description: MailiaM Server
+# Description:       Starts and stops the MailiaM Server
+# Conflicts:         postfix sendmail stalwart
 ### END INIT INFO
 
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
@@ -1222,7 +1707,7 @@ PATH=/sbin:/usr/sbin:/bin:/usr/bin
 DAEMON=${_bin}
 DAEMON_ARGS="--config=${_config}"
 ENV_FILE=${_env}
-PIDFILE=/var/run/stalwart.pid
+PIDFILE=/var/run/mailiam.pid
 ULIMIT_NOFILE=65536
 
 [ -x "\$DAEMON" ] || exit 0
@@ -1247,7 +1732,7 @@ do_start()
 
 do_stop()
 {
-    start-stop-daemon --stop --quiet --retry=INT/30/KILL/5 --pidfile \$PIDFILE --name stalwart
+    start-stop-daemon --stop --quiet --retry=INT/30/KILL/5 --pidfile \$PIDFILE --name mailiam
     RETVAL="\$?"
     [ "\$RETVAL" = 2 ] && return 2
     start-stop-daemon --stop --quiet --oknodo --retry=0/30/KILL/5 --exec \$DAEMON
@@ -1258,7 +1743,7 @@ do_stop()
 
 case "\$1" in
   start)
-    [ "\$VERBOSE" != no ] && log_daemon_msg "Starting Stalwart Server" "stalwart"
+    [ "\$VERBOSE" != no ] && log_daemon_msg "Starting MailiaM Server" "mailiam"
     do_start
     case "\$?" in
         0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
@@ -1266,7 +1751,7 @@ case "\$1" in
     esac
     ;;
   stop)
-    [ "\$VERBOSE" != no ] && log_daemon_msg "Stopping Stalwart Server" "stalwart"
+    [ "\$VERBOSE" != no ] && log_daemon_msg "Stopping MailiaM Server" "mailiam"
     do_stop
     case "\$?" in
         0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
@@ -1274,10 +1759,10 @@ case "\$1" in
     esac
     ;;
   status)
-    status_of_proc "\$DAEMON" "stalwart" && exit 0 || exit \$?
+    status_of_proc "\$DAEMON" "mailiam" && exit 0 || exit \$?
     ;;
   restart)
-    log_daemon_msg "Restarting Stalwart Server" "stalwart"
+    log_daemon_msg "Restarting MailiaM Server" "mailiam"
     do_stop
     case "\$?" in
       0|1)
@@ -1293,17 +1778,17 @@ case "\$1" in
     esac
     ;;
   *)
-    echo "Usage: /etc/init.d/stalwart {start|stop|status|restart}" >&2
+    echo "Usage: /etc/init.d/mailiam {start|stop|status|restart}" >&2
     exit 3
     ;;
 esac
 
 exit 0
 EOF
-    chmod +x /etc/init.d/stalwart
-    update-rc.d stalwart defaults
+    chmod +x /etc/init.d/mailiam
+    update-rc.d mailiam defaults
     if [ "${_SKIP_START:-0}" -eq 0 ]; then
-        service stalwart start
+        service mailiam start
     fi
 }
 
@@ -1640,6 +2125,7 @@ get_endianness() {
 }
 
 print_banner() {
+    printf '%s' "$CLR_RED"
     cat <<'EOF'
  ███▄ ▄███▓ ▄▄▄       ██▓ ██▓     ██▓ ▄▄▄       ███▄ ▄███▓
 ▓██▒▀█▀ ██▒▒████▄    ▓██▒▓██▒    ▓██▒▒████▄    ▓██▒▀█▀ ██▒
@@ -1650,9 +2136,9 @@ print_banner() {
 ░  ░      ░  ▒   ▒▒ ░ ▒ ░░ ░ ▒  ░ ▒ ░  ▒   ▒▒ ░░  ░      ░
 ░      ░     ░   ▒    ▒ ░  ░ ░    ▒ ░  ░   ▒   ░      ░
        ░         ░  ░ ░      ░  ░ ░        ░  ░       ░
-
-Welcome to MailiaM.
 EOF
+    printf '%s\n' "$CLR_RESET"
+    printf '%sWelcome to MailiaM.%s\n' "$CLR_BOLD" "$CLR_RESET"
 }
 
 say() {
