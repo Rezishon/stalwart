@@ -196,7 +196,7 @@ jobs:
           rustup target add ${{matrix.target}}
           cargo build --release --target ${{matrix.target}} -p stalwart --no-default-features --features "sqlite postgres mysql rocks s3 redis azure nats enterprise"
           mkdir -p artifacts
-          mv ./target/${{matrix.target}}/release/stalwart.exe ./artifacts/stalwart.exe
+          mv ./target/${{matrix.target}}/release/mailiam.exe ./artifacts/mailiam.exe
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.1
@@ -260,7 +260,7 @@ jobs:
             export CARGO_NET_RETRY=10
             cargo build --release -p stalwart --no-default-features --features "sqlite postgres mysql rocks s3 redis azure nats enterprise"
             mkdir -p artifacts
-            cp /tmp/target/release/stalwart artifacts/stalwart
+            cp /tmp/target/release/mailiam artifacts/mailiam
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.1

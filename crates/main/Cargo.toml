@@ -11,7 +11,7 @@ version = "0.16.25"
 edition = "2024"
 
 [[bin]]
-name = "stalwart"
+name = "mailiam"
 path = "src/main.rs"
 
 [dependencies]
