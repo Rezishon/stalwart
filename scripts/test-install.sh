@@ -28,7 +28,7 @@ cleanup() { rm -rf "$_WORKDIR"; }
 trap cleanup EXIT INT HUP
 
 # --- validators ---
-expect_ok validate_source "Rezishon/stalwart"
+expect_ok validate_source "Rezishon/mailiam"
 expect_ok validate_source "https://example.com/releases"
 : > "$_WORKDIR/dummy.tar.gz"
 expect_ok validate_source "$_WORKDIR/dummy.tar.gz"
@@ -42,7 +42,7 @@ expect_ok validate_version "v0.16.25-rl1"
 expect_fail validate_version "bad tag!"
 
 expect_ok validate_prefix "/usr/local"
-expect_ok validate_prefix "/opt/stalwart"
+expect_ok validate_prefix "/opt/mailiam"
 expect_fail validate_prefix "/"
 expect_fail validate_prefix "/usr"
 expect_fail validate_prefix "/bin"
@@ -51,7 +51,7 @@ expect_fail validate_prefix "/proc"
 expect_fail validate_prefix "relative"
 expect_fail validate_prefix "/opt/has'quote"
 
-expect_ok validate_user "stalwart"
+expect_ok validate_user "mailiam"
 expect_ok validate_user "_mail"
 expect_fail validate_user "Root"
 expect_fail validate_user "this-name-is-way-too-long-for-posix"
@@ -153,6 +153,19 @@ eval "$(resolve_paths /opt/mail linux)"
 [ "$_conf_dir" = "/opt/mail/etc" ] || fail custom-conf
 [ "$_data_dir" = "/opt/mail/data" ] || fail custom-data
 ok resolve_paths
+
+# --- set_env_file ---
+_conf_dir="$_WORKDIR/envdir"
+mkdir -p "$_conf_dir"
+set_env_file
+[ "$_env_file" = "$_conf_dir/mailiam.env" ] || fail env-default-mailiam
+: > "$_conf_dir/stalwart.env"
+set_env_file
+[ "$_env_file" = "$_conf_dir/stalwart.env" ] || fail env-legacy-fallback
+: > "$_conf_dir/mailiam.env"
+set_env_file
+[ "$_env_file" = "$_conf_dir/mailiam.env" ] || fail env-prefer-mailiam
+ok set_env_file
 
 # --- env merge (mode 2) ---
 _tmp="$(mktemp)"
@@ -298,11 +311,11 @@ _repo=
 apply_source 'https://example.com/dl/stalwart-x86_64-linux.tar.gz'
 [ -z "$_file" ] || fail apply-https-file
 [ "$_repo" = 'https://example.com/dl/stalwart-x86_64-linux.tar.gz' ] || fail apply-https-repo
-apply_source /opt/stalwart.tar.gz
-[ "$_file" = /opt/stalwart.tar.gz ] || fail apply-local
-apply_source Rezishon/stalwart
+apply_source /opt/mailiam.tar.gz
+[ "$_file" = /opt/mailiam.tar.gz ] || fail apply-local
+apply_source Rezishon/mailiam
 [ -z "$_file" ] || fail apply-repo-file
-[ "$_repo" = Rezishon/stalwart ] || fail apply-repo
+[ "$_repo" = Rezishon/mailiam ] || fail apply-repo
 rm -f "$_tmp" "$_tmp2" "$_tmp3" "$_tmp4"
 ok env-helpers
 
@@ -408,28 +421,35 @@ ok prompt_choice
 print_banner | grep -q 'Welcome to MailiaM.' || fail banner-welcome
 ok print_banner
 
-# --- extract_stalwart (tmpdir only) ---
+# --- extract_mailiam (tmpdir only) ---
 _src="$_WORKDIR/src"
 _out="$_WORKDIR/out"
 mkdir -p "$_src" "$_out"
-printf 'stub\n' > "$_src/stalwart"
-tar -C "$_src" -czf "$_WORKDIR/good.tar.gz" stalwart
-extract_stalwart "$_WORKDIR/good.tar.gz" "$_out"
-[ -f "$_out/stalwart" ] && [ ! -L "$_out/stalwart" ] || fail extract-ok
-[ "$(cat "$_out/stalwart")" = stub ] || fail extract-body
+printf 'stub\n' > "$_src/mailiam"
+tar -C "$_src" -czf "$_WORKDIR/good.tar.gz" mailiam
+extract_mailiam "$_WORKDIR/good.tar.gz" "$_out"
+[ -f "$_out/mailiam" ] && [ ! -L "$_out/mailiam" ] || fail extract-ok
+[ "$(cat "$_out/mailiam")" = stub ] || fail extract-body
+rm -f "$_out/mailiam"
+
+printf 'legacy\n' > "$_src/stalwart"
+tar -C "$_src" -czf "$_WORKDIR/legacy.tar.gz" stalwart
+extract_mailiam "$_WORKDIR/legacy.tar.gz" "$_out"
+[ -f "$_out/stalwart" ] && [ ! -L "$_out/stalwart" ] || fail extract-legacy
+[ "$(cat "$_out/stalwart")" = legacy ] || fail extract-legacy-body
 rm -f "$_out/stalwart"
 
 printf 'extra\n' > "$_src/extra"
-tar -C "$_src" -czf "$_WORKDIR/extra.tar.gz" stalwart extra
-if (extract_stalwart "$_WORKDIR/extra.tar.gz" "$_out") >/dev/null 2>&1; then
+tar -C "$_src" -czf "$_WORKDIR/extra.tar.gz" mailiam extra
+if (extract_mailiam "$_WORKDIR/extra.tar.gz" "$_out") >/dev/null 2>&1; then
     fail extract-extra-members
 fi
 
-tar -C "$_src" -czf "$_WORKDIR/dotdot.tar.gz" --transform 's|^|../|' stalwart
-if (extract_stalwart "$_WORKDIR/dotdot.tar.gz" "$_out") >/dev/null 2>&1; then
+tar -C "$_src" -czf "$_WORKDIR/dotdot.tar.gz" --transform 's|^|../|' mailiam
+if (extract_mailiam "$_WORKDIR/dotdot.tar.gz" "$_out") >/dev/null 2>&1; then
     fail extract-dotdot
 fi
-ok extract_stalwart
+ok extract_mailiam
 
 # --- CLI (subprocess; never reaches root install) ---
 _install="$(dirname "$0")/../install.sh"

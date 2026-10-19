@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
 #
 
-# Stalwart install script -- based on the rustup installation script.
+# MailiaM install script -- based on the rustup installation script.
 
 set -e
 set -u
@@ -541,7 +541,7 @@ prompt_source() {
             ;;
         3)
             prompt_value _file "${_file:-/path/to/mailiam.tar.gz}" validate_source \
-                "Invalid download source." "Local archive path (e.g. /path/to/mailman.tar.gz)"
+                "Invalid download source." "Local archive path (e.g. /path/to/mailiam.tar.gz)"
             ;;
     esac
 }
@@ -556,12 +556,12 @@ prompt_paths() {
     say ""
     say_header "Select installation path:"
     say_opt 1 "Standard system paths" "Default"
-    say_opt 2 "Single base path" "e.g. /opt/stalwart"
+    say_opt 2 "Single base path" "e.g. /opt/mailiam"
     say_opt 3 "Advanced: customize each path"
     prompt_choice _path_choice 1 3 "Choice [1-3]"
     case "$_path_choice" in
         2)
-            prompt_value _prefix /opt/stalwart validate_prefix "Invalid prefix." \
+            prompt_value _prefix /opt/mailiam validate_prefix "Invalid prefix." \
                 "Base directory path"
             apply_paths
             ;;
@@ -573,7 +573,7 @@ prompt_paths() {
             _bin_file="${_bin_dir}/mailiam"
             _bin_legacy="${_bin_dir}/stalwart"
             _config_file="${_conf_dir}/config.json"
-            _env_file="${_conf_dir}/stalwart.env"
+            set_env_file
             ;;
     esac
 }
@@ -874,6 +874,13 @@ adopt_existing_layout() {
         [ -d "$_old_data" ] && _data_dir="$_old_data"
         [ -d "$_old_log" ] && _log_dir="$_old_log"
         _config_file="${_conf_dir}/config.json"
+        set_env_file
+    fi
+}
+
+set_env_file() {
+    _env_file="${_conf_dir}/mailiam.env"
+    if [ ! -e "$_env_file" ] && [ -e "${_conf_dir}/stalwart.env" ]; then
         _env_file="${_conf_dir}/stalwart.env"
     fi
 }
@@ -883,7 +890,7 @@ apply_paths() {
     _bin_file="${_bin_dir}/mailiam"
     _bin_legacy="${_bin_dir}/stalwart"
     _config_file="${_conf_dir}/config.json"
-    _env_file="${_conf_dir}/stalwart.env"
+    set_env_file
 }
 
 apply_source() {
@@ -1010,7 +1017,7 @@ set_dc_defaults() {
     fi
 }
 
-extract_stalwart() {
+extract_mailiam() {
     _tar="$1"
     _outdir="$2"
     _member=
@@ -1021,21 +1028,21 @@ extract_stalwart() {
             *..*|/*)
                 err "Archive contains an unsafe path."
                 ;;
-            stalwart|./stalwart)
+            mailiam|./mailiam|stalwart|./stalwart)
                 _member="$_n"
                 _n_members=$((_n_members + 1))
                 ;;
             *)
-                err "Archive must contain only stalwart."
+                err "Archive must contain only mailiam."
                 ;;
         esac
     done <<EOF
 $(tar -t -f "$_tar")
 EOF
-    [ "$_n_members" -eq 1 ] && [ -n "$_member" ] || err "Archive must contain only stalwart."
+    [ "$_n_members" -eq 1 ] && [ -n "$_member" ] || err "Archive must contain only mailiam."
     ensure tar --no-same-owner -xf "$_tar" -C "$_outdir" "$_member"
-    _extracted="${_outdir}/stalwart"
-    [ -f "$_extracted" ] && [ ! -L "$_extracted" ] || err "Archive member must be a regular file named stalwart."
+    _extracted="${_outdir}/${_member#./}"
+    [ -f "$_extracted" ] && [ ! -L "$_extracted" ] || err "Archive member must be a regular file named mailiam."
 }
 
 install_binary() {
@@ -1044,15 +1051,15 @@ install_binary() {
     if [ -n "$_file" ]; then
         _tar="$_file"
     else
-        _tar="${_tmp}/stalwart.tar.gz"
+        _tar="${_tmp}/mailiam.tar.gz"
         _url="$(download_url "$_repo" "$_version" "$_target")" || err "Invalid download source."
-        say "Downloading stalwart for ${_target}..."
+        say "Downloading MailiaM for ${_target}..."
         if ! downloader "$_url" "$_tar" "$_target"; then
             rm -rf "$_tmp"
             err "Download failed."
         fi
     fi
-    extract_stalwart "$_tar" "$_tmp"
+    extract_mailiam "$_tar" "$_tmp"
     if [ -e "$_bin_file" ]; then
         ensure cp "$_bin_file" "${_bin_file}.bak"
     fi
@@ -1508,7 +1515,7 @@ print_usage() {
     cat <<'EOF'
 Usage: install.sh [OPTIONS] [PREFIX]
 
-Install Stalwart into standard FHS paths or under a custom prefix.
+Install MailiaM into standard FHS paths or under a custom prefix.
 
 Options:
   -y, --yes, --non-interactive  Non-interactive install using defaults
@@ -1546,14 +1553,14 @@ given, the last --prefix wins. Extra positionals are an error.
 With no PREFIX, MailiaM is installed under standard FHS paths:
   binary   /usr/local/bin/mailiam          (stalwart symlink for compatibility)
   config   /etc/mailiam/config.json        (/usr/local/etc/mailiam/config.json on FreeBSD)
-  env      /etc/mailiam/stalwart.env       (/usr/local/etc/mailiam/stalwart.env on FreeBSD)
+  env      /etc/mailiam/mailiam.env        (/usr/local/etc/mailiam/mailiam.env on FreeBSD)
   logs     /var/log/mailiam/
   data     /var/lib/mailiam/               (/var/db/mailiam on FreeBSD)
 
 When PREFIX is provided, a self-contained layout is used instead:
   binary   $PREFIX/bin/mailiam
   config   $PREFIX/etc/config.json
-  env      $PREFIX/etc/stalwart.env
+  env      $PREFIX/etc/mailiam.env
   logs     $PREFIX/logs/
   data     $PREFIX/data/
 EOF
@@ -1589,7 +1596,7 @@ apply_admin_flag() {
 
 write_env_file() {
     {
-        printf '%s\n' '# Environment variables for the Stalwart service.'
+        printf '%s\n' '# Environment variables for the MailiaM service.'
         printf '%s\n' '# Uncomment and edit an entry to override its default.'
         printf '\n'
         printf '%s\n' '# Override the hostname used in HTTP responses'
@@ -1795,59 +1802,59 @@ EOF
 create_service_freebsd() {
     local _bin="$1" _config="$2" _env="$3" _user="$4" _log_dir="$5"
     ensure mkdir -p /usr/local/etc/rc.d
-    cat > /usr/local/etc/rc.d/stalwart <<EOF
+    cat > /usr/local/etc/rc.d/mailiam <<EOF
 #!/bin/sh
 
-# PROVIDE: stalwart
+# PROVIDE: mailiam
 # REQUIRE: NETWORKING LOGIN
 # KEYWORD: shutdown
 
 . /etc/rc.subr
 
-name="stalwart"
-rcvar="stalwart_enable"
-desc="Stalwart Server"
+name="mailiam"
+rcvar="mailiam_enable"
+desc="MailiaM Server"
 
 load_rc_config \$name
 
-: \${stalwart_enable:="NO"}
-: \${stalwart_runas_user:="${_user}"}
-: \${stalwart_runas_group:="${_user}"}
-: \${stalwart_config:="${_config}"}
-: \${stalwart_envfile:="${_env}"}
-: \${stalwart_logfile:="${_log_dir}/stalwart.log"}
-: \${stalwart_fdlimit:="65536"}
+: \${mailiam_enable:="NO"}
+: \${mailiam_runas_user:="${_user}"}
+: \${mailiam_runas_group:="${_user}"}
+: \${mailiam_config:="${_config}"}
+: \${mailiam_envfile:="${_env}"}
+: \${mailiam_logfile:="${_log_dir}/mailiam.log"}
+: \${mailiam_fdlimit:="65536"}
 
-pidfile="/var/run/stalwart.pid"
+pidfile="/var/run/mailiam.pid"
 procname="${_bin}"
 command="/usr/sbin/daemon"
-command_args="-f -o \${stalwart_logfile} -p \${pidfile} ${_bin} --config=\${stalwart_config}"
+command_args="-f -o \${mailiam_logfile} -p \${pidfile} ${_bin} --config=\${mailiam_config}"
 sig_stop="INT"
-start_precmd="stalwart_precmd"
+start_precmd="mailiam_precmd"
 
-stalwart_precmd()
+mailiam_precmd()
 {
     # daemon(8) passes its environment through to the service
-    if [ -r "\${stalwart_envfile}" ]; then
+    if [ -r "\${mailiam_envfile}" ]; then
         set -a
-        . "\${stalwart_envfile}"
+        . "\${mailiam_envfile}"
         set +a
     fi
 
-    # Stalwart binds its listeners as root, then setuid()s to this account
-    export RUN_AS_USER="\${stalwart_runas_user}"
-    export RUN_AS_GROUP="\${stalwart_runas_group}"
+    # MailiaM binds its listeners as root, then setuid()s to this account
+    export RUN_AS_USER="\${mailiam_runas_user}"
+    export RUN_AS_GROUP="\${mailiam_runas_group}"
 
-    ulimit -n "\${stalwart_fdlimit}"
+    ulimit -n "\${mailiam_fdlimit}"
 }
 
 run_rc_command "\$1"
 EOF
-    chmod +x /usr/local/etc/rc.d/stalwart
-    sysrc stalwart_enable=YES
+    chmod +x /usr/local/etc/rc.d/mailiam
+    sysrc mailiam_enable=YES
     if [ "${_SKIP_START:-0}" -eq 0 ]; then
-        service stalwart stop > /dev/null 2>&1 || true
-        service stalwart start
+        service mailiam stop > /dev/null 2>&1 || true
+        service mailiam start
     fi
 }
 
