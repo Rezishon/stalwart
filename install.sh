@@ -173,13 +173,13 @@ download_url() {
     case "$_src" in
         http://*) return 1 ;;
         https://*)
-            printf '%s\n' "${_src%/}/stalwart-${_target}.tar.gz"
+            printf '%s\n' "${_src%/}/mailiam-${_target}.tar.gz"
             ;;
         *)
             if [ "$_tag" = latest ]; then
-                printf '%s\n' "https://github.com/${_src}/releases/latest/download/stalwart-${_target}.tar.gz"
+                printf '%s\n' "https://github.com/${_src}/releases/latest/download/mailiam-${_target}.tar.gz"
             else
-                printf '%s\n' "https://github.com/${_src}/releases/download/${_tag}/stalwart-${_target}.tar.gz"
+                printf '%s\n' "https://github.com/${_src}/releases/download/${_tag}/mailiam-${_target}.tar.gz"
             fi
             ;;
     esac

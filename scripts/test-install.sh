@@ -127,11 +127,11 @@ ok artifact_target
 
 # --- urls ---
 [ "$(download_url Rezishon/stalwart latest x86_64-linux)" = \
-    "https://github.com/Rezishon/stalwart/releases/latest/download/stalwart-x86_64-linux.tar.gz" ] || fail url-latest
+    "https://github.com/Rezishon/stalwart/releases/latest/download/mailiam-x86_64-linux.tar.gz" ] || fail url-latest
 [ "$(download_url Rezishon/stalwart v0.16.25-rl1 aarch64-linux)" = \
-    "https://github.com/Rezishon/stalwart/releases/download/v0.16.25-rl1/stalwart-aarch64-linux.tar.gz" ] || fail url-tag
+    "https://github.com/Rezishon/stalwart/releases/download/v0.16.25-rl1/mailiam-aarch64-linux.tar.gz" ] || fail url-tag
 [ "$(download_url https://example.com/dl latest x86_64-linux)" = \
-    "https://example.com/dl/stalwart-x86_64-linux.tar.gz" ] || fail url-custom
+    "https://example.com/dl/mailiam-x86_64-linux.tar.gz" ] || fail url-custom
 if download_url http://example.com/dl latest x86_64-linux >/dev/null 2>&1; then
     fail url-http
 fi
