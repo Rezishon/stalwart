@@ -930,8 +930,9 @@ comment_env_key() {
 
 apply_mode2_admin() {
     if [ -n "$_admin" ] && [ "$_admin" != random ]; then
-        upsert_env "$1" STALWART_RECOVERY_ADMIN "$_admin"
+        upsert_env "$1" MAILIAM_RECOVERY_ADMIN "$_admin"
     elif [ "$_admin" = random ]; then
+        comment_env_key "$1" MAILIAM_RECOVERY_ADMIN
         comment_env_key "$1" STALWART_RECOVERY_ADMIN
     fi
 }
@@ -958,6 +959,10 @@ read_env_key() {
     printf '%s\n' "$_rek_val"
 }
 
+read_env_key_mail() { # file new old
+    read_env_key "$1" "$2" || read_env_key "$1" "$3"
+}
+
 set_public_url_default() {
     if [ -n "$_public_url" ]; then
         return 0
@@ -980,18 +985,18 @@ set_public_url_default() {
 seed_mode2_from_env() {
     _v=
     if [ -z "${_hostname_arg:-}" ]; then
-        _v="$(read_env_key "$_env_file" STALWART_HOSTNAME)" || _v=
+        _v="$(read_env_key_mail "$_env_file" MAILIAM_HOSTNAME STALWART_HOSTNAME)" || _v=
         if [ -n "$_v" ] && validate_hostname "$_v"; then
             _hostname="$_v"
         fi
     fi
     if [ -z "${_public_url_arg:-}" ]; then
-        _v="$(read_env_key "$_env_file" STALWART_PUBLIC_URL)" || _v=
+        _v="$(read_env_key_mail "$_env_file" MAILIAM_PUBLIC_URL STALWART_PUBLIC_URL)" || _v=
         if [ -n "$_v" ] && validate_public_url "$_v"; then
             _public_url="$_v"
         else
             _public_url=
-            _v="$(read_env_key "$_env_file" STALWART_LISTEN_HTTPS)" || _v=
+            _v="$(read_env_key_mail "$_env_file" MAILIAM_LISTEN_HTTPS STALWART_LISTEN_HTTPS)" || _v=
             if validate_port "$_v"; then
                 _listen_https="$_v"
             fi
@@ -1080,12 +1085,12 @@ recovery_port() {
     _rp_file="${1:-}"
     _rp=
     if [ -n "$_rp_file" ]; then
-        _rp="$(read_env_key "$_rp_file" STALWART_RECOVERY_MODE_PORT)" || _rp=
+        _rp="$(read_env_key_mail "$_rp_file" MAILIAM_RECOVERY_MODE_PORT STALWART_RECOVERY_MODE_PORT)" || _rp=
         if validate_port "$_rp" && [ "$_rp" != 0 ]; then
             printf '%s\n' "$_rp"
             return 0
         fi
-        _rp="$(read_env_key "$_rp_file" STALWART_LISTEN_HTTP)" || _rp=
+        _rp="$(read_env_key_mail "$_rp_file" MAILIAM_LISTEN_HTTP STALWART_LISTEN_HTTP)" || _rp=
         if validate_port "$_rp" && [ "$_rp" != 0 ]; then
             printf '%s\n' "$_rp"
             return 0
@@ -1467,8 +1472,8 @@ main() {
                 : > "$_env_file"
                 chmod 0640 "$_env_file"
             fi
-            upsert_env "$_env_file" STALWART_HOSTNAME "$_hostname"
-            upsert_env "$_env_file" STALWART_PUBLIC_URL "$_public_url"
+            upsert_env "$_env_file" MAILIAM_HOSTNAME "$_hostname"
+            upsert_env "$_env_file" MAILIAM_PUBLIC_URL "$_public_url"
             apply_mode2_admin "$_env_file"
             ;;
         *)
@@ -1525,25 +1530,25 @@ Options:
   --file <path>                 Local .tar.gz archive
   --prefix <path>               Installation prefix
   --user <name>                 Service account (default: mailiam)
-  --hostname <host>             STALWART_HOSTNAME
-  --public-url <url>            STALWART_PUBLIC_URL
+  --hostname <host>             MAILIAM_HOSTNAME
+  --public-url <url>            MAILIAM_PUBLIC_URL
   --admin <user:pass>           Custom admin; omit for random
-  --smtp-port <n>               STALWART_LISTEN_SMTP (default: 25)
-  --submission-port <n>         STALWART_LISTEN_SUBMISSION (default: 587)
-  --submissions-port <n>        STALWART_LISTEN_SUBMISSIONS (default: 465)
-  --imap-port <n>               STALWART_LISTEN_IMAP (default: 143)
-  --pop3-port <n>               STALWART_LISTEN_POP3 (default: 110)
-  --sieve-port <n>              STALWART_LISTEN_SIEVE (default: 4190)
-  --https-port <n>              STALWART_LISTEN_HTTPS (default: 443)
-  --http-port <n>               STALWART_LISTEN_HTTP (default: 80)
-  --tls / --no-tls              STALWART_TLS=true / false (default: --tls)
-  --dc-imap-host <host>         STALWART_DC_IMAP_HOST
-  --dc-imap-port <n>            STALWART_DC_IMAP_PORT
-  --dc-imap-security <s>        STALWART_DC_IMAP_SECURITY (default: ssl)
-  --dc-smtp-host <host>         STALWART_DC_SMTP_HOST
-  --dc-smtp-port <n>            STALWART_DC_SMTP_PORT
-  --dc-smtp-security <s>        STALWART_DC_SMTP_SECURITY (default: ssl)
-  --dc-ic <0|1|3>               STALWART_DC_IC (default: 3)
+  --smtp-port <n>               MAILIAM_LISTEN_SMTP (default: 25)
+  --submission-port <n>         MAILIAM_LISTEN_SUBMISSION (default: 587)
+  --submissions-port <n>        MAILIAM_LISTEN_SUBMISSIONS (default: 465)
+  --imap-port <n>               MAILIAM_LISTEN_IMAP (default: 143)
+  --pop3-port <n>               MAILIAM_LISTEN_POP3 (default: 110)
+  --sieve-port <n>              MAILIAM_LISTEN_SIEVE (default: 4190)
+  --https-port <n>              MAILIAM_LISTEN_HTTPS (default: 443)
+  --http-port <n>               MAILIAM_LISTEN_HTTP (default: 80)
+  --tls / --no-tls              MAILIAM_TLS=true / false (default: --tls)
+  --dc-imap-host <host>         MAILIAM_DC_IMAP_HOST
+  --dc-imap-port <n>            MAILIAM_DC_IMAP_PORT
+  --dc-imap-security <s>        MAILIAM_DC_IMAP_SECURITY (default: ssl)
+  --dc-smtp-host <host>         MAILIAM_DC_SMTP_HOST
+  --dc-smtp-port <n>            MAILIAM_DC_SMTP_PORT
+  --dc-smtp-security <s>        MAILIAM_DC_SMTP_SECURITY (default: ssl)
+  --dc-ic <0|1|3>               MAILIAM_DC_IC (default: 3)
   --no-start                    Do not start or restart the service
   -h, --help                    Show this help
 
@@ -1600,46 +1605,46 @@ write_env_file() {
         printf '%s\n' '# Uncomment and edit an entry to override its default.'
         printf '\n'
         printf '%s\n' '# Override the hostname used in HTTP responses'
-        emit_env STALWART_HOSTNAME "$_hostname" || return 1
+        emit_env MAILIAM_HOSTNAME "$_hostname" || return 1
         printf '\n'
         printf '%s\n' '# Override the public base URL published in OAuth, OIDC, and JMAP discovery'
         printf '%s\n' '# documents. Accepts scheme, host, optional port, and optional path prefix.'
-        emit_env STALWART_PUBLIC_URL "$_public_url" || return 1
+        emit_env MAILIAM_PUBLIC_URL "$_public_url" || return 1
         printf '\n'
         printf '%s\n' '# First-boot listeners. Port 0 skips that listener.'
-        emit_env STALWART_LISTEN_SMTP "$_listen_smtp" || return 1
-        emit_env STALWART_LISTEN_SUBMISSION "$_listen_submission" || return 1
-        emit_env STALWART_LISTEN_SUBMISSIONS "$_listen_submissions" || return 1
-        emit_env STALWART_LISTEN_IMAP "$_listen_imap" || return 1
-        emit_env STALWART_LISTEN_POP3 "$_listen_pop3" || return 1
-        emit_env STALWART_LISTEN_SIEVE "$_listen_sieve" || return 1
-        emit_env STALWART_LISTEN_HTTPS "$_listen_https" || return 1
-        emit_env STALWART_LISTEN_HTTP "$_listen_http" || return 1
+        emit_env MAILIAM_LISTEN_SMTP "$_listen_smtp" || return 1
+        emit_env MAILIAM_LISTEN_SUBMISSION "$_listen_submission" || return 1
+        emit_env MAILIAM_LISTEN_SUBMISSIONS "$_listen_submissions" || return 1
+        emit_env MAILIAM_LISTEN_IMAP "$_listen_imap" || return 1
+        emit_env MAILIAM_LISTEN_POP3 "$_listen_pop3" || return 1
+        emit_env MAILIAM_LISTEN_SIEVE "$_listen_sieve" || return 1
+        emit_env MAILIAM_LISTEN_HTTPS "$_listen_https" || return 1
+        emit_env MAILIAM_LISTEN_HTTP "$_listen_http" || return 1
         printf '\n'
         printf '%s\n' '# TLS on inserted listeners (1/true/0/false).'
-        emit_env STALWART_TLS "$_tls" || return 1
+        emit_env MAILIAM_TLS "$_tls" || return 1
         printf '\n'
         printf '%s\n' '# DeltaChat advertised endpoints (first insert only).'
-        emit_env STALWART_DC_IMAP_HOST "$_dc_imap_host" || return 1
-        emit_env STALWART_DC_IMAP_PORT "$_dc_imap_port" || return 1
-        emit_env STALWART_DC_IMAP_SECURITY "$_dc_imap_security" || return 1
-        emit_env STALWART_DC_SMTP_HOST "$_dc_smtp_host" || return 1
-        emit_env STALWART_DC_SMTP_PORT "$_dc_smtp_port" || return 1
-        emit_env STALWART_DC_SMTP_SECURITY "$_dc_smtp_security" || return 1
-        emit_env STALWART_DC_IC "$_dc_ic" || return 1
+        emit_env MAILIAM_DC_IMAP_HOST "$_dc_imap_host" || return 1
+        emit_env MAILIAM_DC_IMAP_PORT "$_dc_imap_port" || return 1
+        emit_env MAILIAM_DC_IMAP_SECURITY "$_dc_imap_security" || return 1
+        emit_env MAILIAM_DC_SMTP_HOST "$_dc_smtp_host" || return 1
+        emit_env MAILIAM_DC_SMTP_PORT "$_dc_smtp_port" || return 1
+        emit_env MAILIAM_DC_SMTP_SECURITY "$_dc_smtp_security" || return 1
+        emit_env MAILIAM_DC_IC "$_dc_ic" || return 1
         if [ -n "${_admin:-}" ] && [ "$_admin" != random ]; then
             printf '\n'
             printf '%s\n' '# Fixed administrator credentials — format: username:password'
-            emit_env STALWART_RECOVERY_ADMIN "$_admin" || return 1
+            emit_env MAILIAM_RECOVERY_ADMIN "$_admin" || return 1
         fi
         printf '\n'
         printf '%s\n' '# Cluster role assigned to this node. Must match a role name defined in the'
         printf '%s\n' '# cluster registry. Leave unset for a standalone (non-clustered) deployment.'
-        printf '%s\n' '#STALWART_ROLE=primary'
+        printf '%s\n' '#MAILIAM_ROLE=primary'
         printf '\n'
         printf '%s\n' '# Push-notification shard this node is responsible for, when running in a'
         printf '%s\n' '# cluster.'
-        printf '%s\n' '#STALWART_PUSH_SHARD=1'
+        printf '%s\n' '#MAILIAM_PUSH_SHARD=1'
     } > "$1" || return 1
     chmod 0640 "$1"
 }

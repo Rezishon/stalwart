@@ -205,21 +205,22 @@ _dc_smtp_security=ssl
 _dc_ic=3
 _admin=
 write_env_file "$_tmp"
-grep -q "^STALWART_HOSTNAME='mail.example.org'$" "$_tmp" || fail env-host
-grep -q "^STALWART_LISTEN_SMTP='25'$" "$_tmp" || fail env-25
-grep -q "^STALWART_LISTEN_SUBMISSION='587'$" "$_tmp" || fail env-587
-grep -q "^STALWART_LISTEN_HTTP='8080'$" "$_tmp" || fail env-http
-grep -q "^STALWART_TLS='true'$" "$_tmp" || fail env-tls
-grep -q "^STALWART_DC_IMAP_HOST='mail.example.org'$" "$_tmp" || fail env-dc-imap
-grep -q "^STALWART_DC_SMTP_PORT='465'$" "$_tmp" || fail env-dc-smtp-port
-grep -q "^STALWART_DC_IC='3'$" "$_tmp" || fail env-ic
-if grep -q '^STALWART_RECOVERY_MODE=' "$_tmp"; then fail no-recovery-mode; fi
-if grep -q '^STALWART_RECOVERY_ADMIN=' "$_tmp"; then fail no-admin-when-random; fi
+grep -q "^MAILIAM_HOSTNAME='mail.example.org'$" "$_tmp" || fail env-host
+grep -q "^MAILIAM_LISTEN_SMTP='25'$" "$_tmp" || fail env-25
+grep -q "^MAILIAM_LISTEN_SUBMISSION='587'$" "$_tmp" || fail env-587
+grep -q "^MAILIAM_LISTEN_HTTP='8080'$" "$_tmp" || fail env-http
+grep -q "^MAILIAM_TLS='true'$" "$_tmp" || fail env-tls
+grep -q "^MAILIAM_DC_IMAP_HOST='mail.example.org'$" "$_tmp" || fail env-dc-imap
+grep -q "^MAILIAM_DC_SMTP_PORT='465'$" "$_tmp" || fail env-dc-smtp-port
+grep -q "^MAILIAM_DC_IC='3'$" "$_tmp" || fail env-ic
+if grep -q '^MAILIAM_RECOVERY_MODE=' "$_tmp"; then fail no-recovery-mode; fi
+if grep -q '^MAILIAM_RECOVERY_ADMIN=' "$_tmp"; then fail no-admin-when-random; fi
+if grep -q '^STALWART_HOSTNAME=' "$_tmp"; then fail no-old-host; fi
 _mode=$(stat -c '%a' "$_tmp" 2>/dev/null || stat -f '%OLp' "$_tmp")
 [ "$_mode" = 640 ] || fail env-mode
 _admin='ops:twelvecharsx'
 write_env_file "$_tmp"
-grep -q "^STALWART_RECOVERY_ADMIN='ops:twelvecharsx'$" "$_tmp" || fail env-admin
+grep -q "^MAILIAM_RECOVERY_ADMIN='ops:twelvecharsx'$" "$_tmp" || fail env-admin
 _admin=
 rm -f "$_tmp"
 ok write_env_file
@@ -255,6 +256,11 @@ STALWART_LISTEN_HTTP='18080'
 EOF
 [ "$(recovery_port "$_tmp3")" = 18080 ] || fail recovery-listen-http
 [ "$(recovery_port /no/such/env)" = 80 ] || fail recovery-missing
+_tmp_mail="$(mktemp)"
+cat > "$_tmp_mail" <<'EOF'
+MAILIAM_RECOVERY_MODE_PORT='9191'
+EOF
+[ "$(recovery_port "$_tmp_mail")" = 9191 ] || fail recovery-mailiam
 
 _hostname_arg=
 _public_url_arg=
@@ -294,17 +300,17 @@ upsert_env "$_tmp" STALWART_HOSTNAME mail.example.org
 
 _admin=
 cat > "$_tmp" <<'EOF'
-STALWART_HOSTNAME='mail.example.org'
-STALWART_RECOVERY_ADMIN='admin:twelvecharsx'
+MAILIAM_HOSTNAME='mail.example.org'
+MAILIAM_RECOVERY_ADMIN='admin:twelvecharsx'
 EOF
 apply_mode2_admin "$_tmp"
-grep -q "^STALWART_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail mode2-admin-keep
+grep -q "^MAILIAM_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail mode2-admin-keep
 _admin=random
 apply_mode2_admin "$_tmp"
-grep -q "^#STALWART_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail mode2-admin-random
+grep -q "^#MAILIAM_RECOVERY_ADMIN='admin:twelvecharsx'$" "$_tmp" || fail mode2-admin-random
 _admin='ops:twelvecharsx'
 apply_mode2_admin "$_tmp"
-grep -q "^STALWART_RECOVERY_ADMIN='ops:twelvecharsx'$" "$_tmp" || fail mode2-admin-set
+grep -q "^MAILIAM_RECOVERY_ADMIN='ops:twelvecharsx'$" "$_tmp" || fail mode2-admin-set
 
 _file=
 _repo=
@@ -316,7 +322,7 @@ apply_source /opt/mailiam.tar.gz
 apply_source Rezishon/mailiam
 [ -z "$_file" ] || fail apply-repo-file
 [ "$_repo" = Rezishon/mailiam ] || fail apply-repo
-rm -f "$_tmp" "$_tmp2" "$_tmp3" "$_tmp4"
+rm -f "$_tmp" "$_tmp2" "$_tmp3" "$_tmp4" "$_tmp_mail"
 ok env-helpers
 
 # --- apply_admin_flag / set_dc_defaults ---

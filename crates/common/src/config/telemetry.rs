@@ -23,6 +23,10 @@ use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use store::registry::bootstrap::Bootstrap;
 use trc::{EventType, Level, MetricType, TelemetryEvent, ipc::subscriber::Interests};
 
+fn env_mail(new: &str, old: &str) -> Result<String, std::env::VarError> {
+    std::env::var(new).or_else(|_| std::env::var(old))
+}
+
 #[derive(Debug)]
 pub struct TelemetrySubscriber {
     pub id: String,
@@ -551,10 +555,13 @@ impl Tracers {
             }
         } else {
             // Add default tracer if none were found
-            let level = std::env::var("STALWART_RECOVERY_MODE_LOG_LEVEL")
-                .ok()
-                .and_then(|level| Level::from_str(&level).ok())
-                .unwrap_or(Level::Info);
+            let level = env_mail(
+                "MAILIAM_RECOVERY_MODE_LOG_LEVEL",
+                "STALWART_RECOVERY_MODE_LOG_LEVEL",
+            )
+            .ok()
+            .and_then(|level| Level::from_str(&level).ok())
+            .unwrap_or(Level::Info);
             for event_type in EventType::variants() {
                 let event_level = custom_levels
                     .get(event_type)

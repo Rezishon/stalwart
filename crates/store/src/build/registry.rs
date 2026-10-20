@@ -42,7 +42,7 @@ impl RegistryStore {
                     eprintln!("longer apply.");
                     eprintln!();
                     eprintln!("This password is shown only once. To pin a credential");
-                    eprintln!("instead, set STALWART_RECOVERY_ADMIN=admin:<password> in the");
+                    eprintln!("instead, set MAILIAM_RECOVERY_ADMIN=admin:<password> in the");
                     eprintln!("env file.");
                     eprintln!("════════════════════════════════════════════════════════════");
                     eprintln!();

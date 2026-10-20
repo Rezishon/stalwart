@@ -35,6 +35,10 @@ use tokio_rustls::TlsAcceptor;
 use types::id::Id;
 use utils::snowflake::SnowflakeIdGenerator;
 
+fn env_mail(new: &str, old: &str) -> Result<String, std::env::VarError> {
+    std::env::var(new).or_else(|_| std::env::var(old))
+}
+
 impl Listeners {
     pub async fn parse(bp: &mut Bootstrap) -> Self {
         // Parse ACME managers
@@ -69,10 +73,13 @@ impl Listeners {
                         bind: Map::new(vec![
                             SocketAddr::from_str(&format!(
                                 "[::]:{}",
-                                std::env::var("STALWART_RECOVERY_MODE_PORT")
-                                    .ok()
-                                    .and_then(|p| p.parse::<u16>().ok())
-                                    .unwrap_or(8080)
+                                env_mail(
+                                    "MAILIAM_RECOVERY_MODE_PORT",
+                                    "STALWART_RECOVERY_MODE_PORT"
+                                )
+                                .ok()
+                                .and_then(|p| p.parse::<u16>().ok())
+                                .unwrap_or(8080)
                             ))
                             .unwrap(),
                         ]),
