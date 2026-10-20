@@ -108,14 +108,10 @@ impl DeltaChatSettings {
     }
 }
 
-fn env_mail(new: &str, old: &str) -> Option<String> {
-    std::env::var(new).or_else(|_| std::env::var(old)).ok()
-}
-
 fn env_tls_on() -> bool {
-    match env_mail("MAILIAM_TLS", "STALWART_TLS") {
-        Some(raw) => matches!(raw.to_ascii_lowercase().as_str(), "1" | "true"),
-        None => true,
+    match std::env::var("MAILIAM_TLS") {
+        Ok(raw) => matches!(raw.to_ascii_lowercase().as_str(), "1" | "true"),
+        Err(_) => true,
     }
 }
 
@@ -149,7 +145,8 @@ fn parse_dc_ic(raw: Option<&str>, tls: bool) -> u8 {
 
 fn endpoints_from_env(default_host: &str, server: Option<&Server>) -> EndpointsConfig {
     let tls = env_tls_on();
-    let imap_host = env_mail("MAILIAM_DC_IMAP_HOST", "STALWART_DC_IMAP_HOST")
+    let imap_host = std::env::var("MAILIAM_DC_IMAP_HOST")
+        .ok()
         .filter(|s| !s.is_empty())
         .or_else(|| {
             server.and_then(|s| {
@@ -162,7 +159,8 @@ fn endpoints_from_env(default_host: &str, server: Option<&Server>) -> EndpointsC
             })
         })
         .unwrap_or_else(|| default_host.to_string());
-    let smtp_host = env_mail("MAILIAM_DC_SMTP_HOST", "STALWART_DC_SMTP_HOST")
+    let smtp_host = std::env::var("MAILIAM_DC_SMTP_HOST")
+        .ok()
         .filter(|s| !s.is_empty())
         .or_else(|| {
             server.and_then(|s| {
@@ -179,30 +177,33 @@ fn endpoints_from_env(default_host: &str, server: Option<&Server>) -> EndpointsC
         imap: MailEndpointConfig {
             host: imap_host,
             port: parse_dc_port(
-                env_mail("MAILIAM_DC_IMAP_PORT", "STALWART_DC_IMAP_PORT").as_deref(),
+                std::env::var("MAILIAM_DC_IMAP_PORT").ok().as_deref(),
                 993,
                 143,
                 tls,
             ),
             security: parse_dc_security(
-                env_mail("MAILIAM_DC_IMAP_SECURITY", "STALWART_DC_IMAP_SECURITY").as_deref(),
+                std::env::var("MAILIAM_DC_IMAP_SECURITY").ok().as_deref(),
                 tls,
             ),
         },
         smtp: MailEndpointConfig {
             host: smtp_host,
             port: parse_dc_port(
-                env_mail("MAILIAM_DC_SMTP_PORT", "STALWART_DC_SMTP_PORT").as_deref(),
+                std::env::var("MAILIAM_DC_SMTP_PORT").ok().as_deref(),
                 465,
                 587,
                 tls,
             ),
             security: parse_dc_security(
-                env_mail("MAILIAM_DC_SMTP_SECURITY", "STALWART_DC_SMTP_SECURITY").as_deref(),
+                std::env::var("MAILIAM_DC_SMTP_SECURITY").ok().as_deref(),
                 tls,
             ),
         },
-        ic: parse_dc_ic(env_mail("MAILIAM_DC_IC", "STALWART_DC_IC").as_deref(), tls),
+        ic: parse_dc_ic(
+            std::env::var("MAILIAM_DC_IC").ok().as_deref(),
+            tls,
+        ),
     }
 }
 

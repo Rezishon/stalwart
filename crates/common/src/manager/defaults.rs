@@ -441,12 +441,11 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
         == 0
     {
         let use_tls = env_tls();
-        for (protocol, name, new, old, default, tls_implicit) in [
+        for (protocol, name, env_key, default, tls_implicit) in [
             (
                 NetworkListenerProtocol::Smtp,
                 "smtp",
                 "MAILIAM_LISTEN_SMTP",
-                "STALWART_LISTEN_SMTP",
                 25,
                 false,
             ),
@@ -454,7 +453,6 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 NetworkListenerProtocol::Smtp,
                 "submission",
                 "MAILIAM_LISTEN_SUBMISSION",
-                "STALWART_LISTEN_SUBMISSION",
                 587,
                 false,
             ),
@@ -462,7 +460,6 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 NetworkListenerProtocol::Smtp,
                 "submissions",
                 "MAILIAM_LISTEN_SUBMISSIONS",
-                "STALWART_LISTEN_SUBMISSIONS",
                 465,
                 true,
             ),
@@ -470,7 +467,6 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 NetworkListenerProtocol::Imap,
                 "imap",
                 "MAILIAM_LISTEN_IMAP",
-                "STALWART_LISTEN_IMAP",
                 143,
                 false,
             ),
@@ -478,7 +474,6 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 NetworkListenerProtocol::Pop3,
                 "pop3",
                 "MAILIAM_LISTEN_POP3",
-                "STALWART_LISTEN_POP3",
                 110,
                 false,
             ),
@@ -486,7 +481,6 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 NetworkListenerProtocol::ManageSieve,
                 "sieve",
                 "MAILIAM_LISTEN_SIEVE",
-                "STALWART_LISTEN_SIEVE",
                 4190,
                 false,
             ),
@@ -494,7 +488,6 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 NetworkListenerProtocol::Http,
                 "https",
                 "MAILIAM_LISTEN_HTTPS",
-                "STALWART_LISTEN_HTTPS",
                 443,
                 true,
             ),
@@ -502,7 +495,6 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 NetworkListenerProtocol::Http,
                 "http",
                 "MAILIAM_LISTEN_HTTP",
-                "STALWART_LISTEN_HTTP",
                 80,
                 false,
             ),
@@ -510,7 +502,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
             if tls_implicit && !use_tls {
                 continue;
             }
-            let Some(port) = env_port(new, old, default) else {
+            let Some(port) = env_port(env_key, default) else {
                 continue;
             };
             bp.registry
@@ -528,6 +520,30 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                     .into(),
                 ))
                 .await?;
+        }
+    } else if let Ok(listeners) = bp.registry.list::<NetworkListener>().await {
+        let target_port = env_port("MAILIAM_LISTEN_HTTP", 80);
+        for listener in listeners {
+            let ports: Vec<u16> = listener.object.bind.iter().map(|a| a.0.port()).collect();
+            if let Some(repaired_port) = should_repair_http_listener(
+                &listener.object.name,
+                listener.object.protocol,
+                &ports,
+                target_port,
+            ) {
+                let mut updated = listener.object.clone();
+                updated.bind = Map::new(vec![
+                    SocketAddr::from_str(&format!("[::]:{repaired_port}")).unwrap(),
+                ]);
+                let _ = bp
+                    .registry
+                    .write(RegistryWrite::update(
+                        listener.id.id(),
+                        &updated.into(),
+                        &listener.object.into(),
+                    ))
+                    .await;
+            }
         }
     }
 
@@ -632,14 +648,8 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
     Ok(())
 }
 
-fn env_port(new: &str, old: &str, default: u16) -> Option<u16> {
-    env_port_from(
-        std::env::var(new)
-            .or_else(|_| std::env::var(old))
-            .ok()
-            .as_deref(),
-        default,
-    )
+fn env_port(name: &str, default: u16) -> Option<u16> {
+    env_port_from(std::env::var(name).ok().as_deref(), default)
 }
 
 /// Unset → `Some(default)`. `0` or unparsable → `None` (skip that listener).
@@ -655,9 +665,27 @@ fn env_port_from(raw: Option<&str>, default: u16) -> Option<u16> {
 }
 
 fn env_tls() -> bool {
-    match std::env::var("MAILIAM_TLS").or_else(|_| std::env::var("STALWART_TLS")) {
+    match std::env::var("MAILIAM_TLS") {
         Ok(raw) => matches!(raw.to_ascii_lowercase().as_str(), "1" | "true"),
         Err(_) => true,
+    }
+}
+
+fn should_repair_http_listener(
+    listener_name: &str,
+    protocol: NetworkListenerProtocol,
+    current_ports: &[u16],
+    target_port: Option<u16>,
+) -> Option<u16> {
+    if listener_name == "http"
+        && protocol == NetworkListenerProtocol::Http
+        && current_ports.contains(&8080)
+        && let Some(target) = target_port
+        && target != 8080
+    {
+        Some(target)
+    } else {
+        None
     }
 }
 
@@ -672,5 +700,33 @@ mod tests {
         assert_eq!(env_port_from(Some("0"), 143), None);
         assert_eq!(env_port_from(Some("nope"), 143), None);
         assert_eq!(env_port_from(Some(""), 143), None);
+    }
+
+    #[test]
+    fn repair_http_listener_legacy_8080() {
+        assert_eq!(
+            should_repair_http_listener("http", NetworkListenerProtocol::Http, &[8080], Some(80)),
+            Some(80)
+        );
+        assert_eq!(
+            should_repair_http_listener("http", NetworkListenerProtocol::Http, &[8080], Some(8080)),
+            None
+        );
+        assert_eq!(
+            should_repair_http_listener("http", NetworkListenerProtocol::Http, &[80], Some(80)),
+            None
+        );
+        assert_eq!(
+            should_repair_http_listener("http", NetworkListenerProtocol::Http, &[8080], None),
+            None
+        );
+        assert_eq!(
+            should_repair_http_listener("https", NetworkListenerProtocol::Http, &[8080], Some(80)),
+            None
+        );
+        assert_eq!(
+            should_repair_http_listener("http", NetworkListenerProtocol::Smtp, &[8080], Some(80)),
+            None
+        );
     }
 }
