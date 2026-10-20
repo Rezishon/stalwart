@@ -10,7 +10,7 @@ services:
             - target-cache:/cargo-target
             - mailiam-data:/var/lib/mailiam
         ports:
-            - "8080:8080" # HTTP Admin Web UI & APIs
+            - "80:80" # HTTP Admin Web UI & APIs
             - "443:443" # HTTPS
             - "2525:25" # SMTP (mapped to 2525 to avoid host port 25 conflict)
             - "465:465" # SMTPS
@@ -22,9 +22,9 @@ services:
             - "4190:4190" # ManageSieve
         environment:
             - CARGO_TARGET_DIR=/cargo-target
-            - STALWART_PATH=/var/lib/mailiam
+            - MAILIAM_PATH=/var/lib/mailiam
             - RUST_LOG=info
-            - STALWART_RECOVERY_ADMIN=admin:admin123456
+            - MAILIAM_RECOVERY_ADMIN=admin:admin123456
         command: cargo run -p stalwart --no-default-features --features "sqlite enterprise" -- -c /var/lib/mailiam/config.json
         stdin_open: true
         tty: true
