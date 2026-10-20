@@ -656,9 +656,9 @@ fn map_dns_server(dns_server: &DnsServerBootstrap) -> Option<registry::schema::s
 // FreeBSD keeps variable application data under /var/db (hier(7))
 // rather than FHS /var/lib.
 const DEFAULT_DATA_PATH: &str = if cfg!(target_os = "freebsd") {
-    "/var/db/stalwart/"
+    "/var/db/mailiam/"
 } else {
-    "/var/lib/stalwart/"
+    "/var/lib/mailiam/"
 };
 
 fn build_default_bootstrap(server: &Server) -> Bootstrap {
@@ -677,8 +677,8 @@ fn build_default_bootstrap(server: &Server) -> Bootstrap {
         in_memory_store: InMemoryStore::Default,
         directory: DirectoryBootstrap::Internal,
         tracer: Tracer::Log(TracerLog {
-            path: "/var/log/stalwart/".to_string(),
-            prefix: "stalwart".to_string(),
+            path: "/var/log/mailiam/".to_string(),
+            prefix: "mailiam.log".to_string(),
             ansi: true,
             enable: true,
             ..Default::default()

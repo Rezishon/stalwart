@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /workspace
 
 ENV CARGO_TARGET_DIR=/cargo-target
-ENV STALWART_PATH=/var/lib/stalwart
+ENV STALWART_PATH=/var/lib/mailiam
 
 EXPOSE 8080 443 25 587 465 143 993 995 4190
 
-CMD ["cargo", "run", "-p", "stalwart", "--", "-c", "/var/lib/stalwart/config.json"]
+CMD ["cargo", "run", "-p", "stalwart", "--", "-c", "/var/lib/mailiam/config.json"]
