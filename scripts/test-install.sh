@@ -424,7 +424,23 @@ _got=$(printf '9\n3\n' | { prompt_choice _c 1 3 "Choice [1-3]" >/dev/null; print
 [ "$_got" = 3 ] || fail choice-retry
 ok prompt_choice
 
-print_banner | grep -q 'Welcome to MailiaM.' || fail banner-welcome
+_hostname=mail.example.com
+printf '\n' | prompt_hostname_step > "$_WORKDIR/hn.out"
+grep -q 'Server hostname (FQDN)' "$_WORKDIR/hn.out" || fail hostname-prompt-missing
+if grep -q 'Primary domain for SMTP' "$_WORKDIR/hn.out"; then fail hostname-extra-hint; fi
+[ "$(grep -c . "$_WORKDIR/hn.out")" -eq 1 ] || fail hostname-not-single-line
+ok hostname-single-line
+
+_pw=$(generate_password)
+[ "${#_pw}" -eq 16 ] || fail gen-pw-len
+printf '%s' "$_pw" | grep -Eq '^[A-Za-z0-9]{16}$' || fail gen-pw-alnum
+_admin=
+ensure_generated_admin
+[ "${_admin#admin:}" != "$_admin" ] || fail gen-admin-prefix
+[ "${#_admin}" -eq 22 ] || fail gen-admin-len
+ok generate-admin
+
+print_banner | grep -q '███▄ ▄███▓' || fail banner-art
 ok print_banner
 
 # --- extract_mailiam (tmpdir only) ---
@@ -456,6 +472,44 @@ if (extract_mailiam "$_WORKDIR/dotdot.tar.gz" "$_out") >/dev/null 2>&1; then
     fail extract-dotdot
 fi
 ok extract_mailiam
+
+[ "$(init_from_hints freebsd n n n)" = freebsd ] || fail init-fbsd
+[ "$(init_from_hints linux y n n)" = systemd ] || fail init-systemd
+[ "$(init_from_hints linux n y n)" = openrc ] || fail init-openrc
+[ "$(init_from_hints linux n n y)" = sysv ] || fail init-sysv
+[ "$(init_from_hints linux n n n)" = none ] || fail init-none
+[ "$(init_from_hints linux y y y)" = systemd ] || fail init-systemd-wins
+[ "$(init_from_hints darwin y y y)" = none ] || fail init-other
+ok init_from_hints
+
+printf 'old\n' > "$_WORKDIR/bin-dest"
+printf 'new\n' > "$_WORKDIR/bin-src"
+replace_binary "$_WORKDIR/bin-dest" "$_WORKDIR/bin-src"
+[ "$(cat "$_WORKDIR/bin-dest")" = new ] || fail replace-body
+[ ! -e "$_WORKDIR/bin-dest.new.$$" ] || fail replace-leftover
+ok replace_binary
+
+_from_ver=0.16.25-rl1.0.18
+_to_ver=0.16.25-rl1.0.19
+_bin_file=/usr/local/bin/mailiam
+_init=sysv
+_log_dir=/var/log/mailiam
+NO_COLOR=1 init_colors
+print_update_success > "$_WORKDIR/upd.out"
+grep -q '0.16.25-rl1.0.18 => 0.16.25-rl1.0.19' "$_WORKDIR/upd.out" || fail update-from-to
+ok print_update_success
+
+_init=none
+_bin_file=/usr/local/bin/mailiam
+_config_file=/etc/mailiam/config.json
+_env_file=/etc/mailiam/mailiam.env
+_log_dir=/var/log/mailiam
+NO_COLOR=1 init_colors
+print_service_hints > "$_WORKDIR/hints.out"
+grep -q 'mailiam --config=/etc/mailiam/config.json' "$_WORKDIR/hints.out" || fail none-hints-start
+grep -q 'mailiam.env' "$_WORKDIR/hints.out" || fail none-hints-env
+if grep -q 'service mailiam' "$_WORKDIR/hints.out"; then fail none-hints-no-service; fi
+ok print_service_hints-none
 
 # --- CLI (subprocess; never reaches root install) ---
 _install="$(dirname "$0")/../install.sh"
