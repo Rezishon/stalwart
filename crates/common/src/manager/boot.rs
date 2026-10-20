@@ -42,7 +42,7 @@ pub struct IpcReceivers {
 
 const HELP: &str = concat!(
     "MailiaM Server v",
-    env!("STALWART_VERSION"),
+    env!("MAILIAM_VERSION"),
     r#"
 
 Usage: mailiam [OPTIONS]
@@ -90,7 +90,7 @@ impl BootManager {
                         std::process::exit(0);
                     }
                     ("version" | "V", _) => {
-                        println!("{}", env!("STALWART_VERSION"));
+                        println!("{}", env!("MAILIAM_VERSION"));
                         std::process::exit(0);
                     }
                     ("config" | "c", Some(value)) => {
@@ -176,7 +176,7 @@ impl BootManager {
                         Details = format!(
                             "No configuration file was found. Port {port} is open for initial setup."
                         ),
-                        Version = env!("STALWART_VERSION"),
+                        Version = env!("MAILIAM_VERSION"),
                     );
                 } else if bootstrap.registry.is_recovery_mode() {
                     let port = recovery_http_port();
@@ -184,13 +184,13 @@ impl BootManager {
                         Server(trc::ServerEvent::RecoveryMode),
                         Details = format!("Port {port} is open for troubleshooting and recovery."),
                         Hostname = bootstrap.registry.local_hostname().to_string(),
-                        Version = env!("STALWART_VERSION"),
+                        Version = env!("MAILIAM_VERSION"),
                     );
                 } else {
                     trc::event!(
                         Server(trc::ServerEvent::Startup),
                         Hostname = bootstrap.registry.local_hostname().to_string(),
-                        Version = env!("STALWART_VERSION"),
+                        Version = env!("MAILIAM_VERSION"),
                     );
                 }
 

@@ -29,6 +29,7 @@ fn main() {
         .trim()
         .to_string();
     let pkg = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
+    println!("cargo:rustc-env=MAILIAM_VERSION={pkg}-{suffix}");
     println!("cargo:rustc-env=STALWART_VERSION={pkg}-{suffix}");
     println!("cargo:rerun-if-changed={}", rl_path.display());
 

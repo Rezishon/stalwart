@@ -982,7 +982,6 @@ apply_mode2_admin() {
         upsert_env "$1" MAILIAM_RECOVERY_ADMIN "$_admin"
     elif [ "$_admin" = random ]; then
         comment_env_key "$1" MAILIAM_RECOVERY_ADMIN
-        comment_env_key "$1" STALWART_RECOVERY_ADMIN
     fi
 }
 
