@@ -97,6 +97,7 @@ mod tests {
                 port: 465,
                 security: EndpointSecurity::Ssl,
             },
+            ic: 3,
         }
     }
 

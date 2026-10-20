@@ -164,6 +164,7 @@ fn test_e2e_dclogin_builder_compliance() {
             port: 587,
             security: EndpointSecurity::Starttls,
         },
+        ic: 3,
     };
 
     let email = "alice@deltachat.example.org";

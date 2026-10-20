@@ -16,7 +16,7 @@ pub fn build_dclogin_uri(email: &str, password: &str, endpoints: &EndpointsConfi
         .append_pair("sh", &endpoints.smtp.host)
         .append_pair("sp", &endpoints.smtp.port.to_string())
         .append_pair("ss", endpoints.smtp.security.as_str())
-        .append_pair("ic", "3")
+        .append_pair("ic", &endpoints.ic.to_string())
         .finish();
 
     format!("dclogin:{email}/?{query}")
@@ -40,6 +40,7 @@ mod tests {
                 port: 465,
                 security: EndpointSecurity::Ssl,
             },
+            ic: 3,
         };
 
         let uri = build_dclogin_uri("user@example.org", "pass123!", &endpoints);

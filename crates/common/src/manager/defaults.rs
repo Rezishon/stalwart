@@ -440,15 +440,79 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
         .await?
         == 0
     {
-        for (protocol, name, port, tls_implicit) in [
-            (NetworkListenerProtocol::Smtp, "smtp", 25, false),
-            (NetworkListenerProtocol::Smtp, "submissions", 465, true),
-            (NetworkListenerProtocol::Imap, "imaps", 993, true),
-            (NetworkListenerProtocol::Pop3, "pop3s", 995, true),
-            (NetworkListenerProtocol::ManageSieve, "sieve", 4190, false),
-            (NetworkListenerProtocol::Http, "https", 443, true),
-            (NetworkListenerProtocol::Http, "http", 8080, false),
+        let use_tls = env_tls();
+        for (protocol, name, new, old, default, tls_implicit) in [
+            (
+                NetworkListenerProtocol::Smtp,
+                "smtp",
+                "MAILIAM_LISTEN_SMTP",
+                "STALWART_LISTEN_SMTP",
+                25,
+                false,
+            ),
+            (
+                NetworkListenerProtocol::Smtp,
+                "submission",
+                "MAILIAM_LISTEN_SUBMISSION",
+                "STALWART_LISTEN_SUBMISSION",
+                587,
+                false,
+            ),
+            (
+                NetworkListenerProtocol::Smtp,
+                "submissions",
+                "MAILIAM_LISTEN_SUBMISSIONS",
+                "STALWART_LISTEN_SUBMISSIONS",
+                465,
+                true,
+            ),
+            (
+                NetworkListenerProtocol::Imap,
+                "imap",
+                "MAILIAM_LISTEN_IMAP",
+                "STALWART_LISTEN_IMAP",
+                143,
+                false,
+            ),
+            (
+                NetworkListenerProtocol::Pop3,
+                "pop3",
+                "MAILIAM_LISTEN_POP3",
+                "STALWART_LISTEN_POP3",
+                110,
+                false,
+            ),
+            (
+                NetworkListenerProtocol::ManageSieve,
+                "sieve",
+                "MAILIAM_LISTEN_SIEVE",
+                "STALWART_LISTEN_SIEVE",
+                4190,
+                false,
+            ),
+            (
+                NetworkListenerProtocol::Http,
+                "https",
+                "MAILIAM_LISTEN_HTTPS",
+                "STALWART_LISTEN_HTTPS",
+                443,
+                true,
+            ),
+            (
+                NetworkListenerProtocol::Http,
+                "http",
+                "MAILIAM_LISTEN_HTTP",
+                "STALWART_LISTEN_HTTP",
+                80,
+                false,
+            ),
         ] {
+            if tls_implicit && !use_tls {
+                continue;
+            }
+            let Some(port) = env_port(new, old, default) else {
+                continue;
+            };
             bp.registry
                 .write(RegistryWrite::insert(
                     &NetworkListener {
@@ -457,7 +521,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                         ]),
                         name: name.to_string(),
                         protocol,
-                        use_tls: true,
+                        use_tls,
                         tls_implicit,
                         ..Default::default()
                     }
@@ -524,11 +588,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
             .map(|s| s.default_domain_id)
             .filter(Id::is_valid);
 
-        if let Some(old) = bp
-            .registry
-            .get(ObjectType::DeltaChat.singleton())
-            .await?
-        {
+        if let Some(old) = bp.registry.get(ObjectType::DeltaChat.singleton()).await? {
             let mut dc = DeltaChat::from(old.clone());
             if !dc.domain_id.is_valid()
                 && let Some(domain_id) = sys_domain
@@ -544,9 +604,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
             if let Some(domain_id) = sys_domain {
                 dc.domain_id = domain_id;
             }
-            bp.registry
-                .write(RegistryWrite::insert(&dc.into()))
-                .await?;
+            bp.registry.write(RegistryWrite::insert(&dc.into())).await?;
         }
     }
 
@@ -572,4 +630,47 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
     }
 
     Ok(())
+}
+
+fn env_port(new: &str, old: &str, default: u16) -> Option<u16> {
+    env_port_from(
+        std::env::var(new)
+            .or_else(|_| std::env::var(old))
+            .ok()
+            .as_deref(),
+        default,
+    )
+}
+
+/// Unset → `Some(default)`. `0` or unparsable → `None` (skip that listener).
+fn env_port_from(raw: Option<&str>, default: u16) -> Option<u16> {
+    match raw {
+        None => Some(default),
+        Some(s) => match s.parse::<u16>() {
+            Ok(0) => None,
+            Ok(p) => Some(p),
+            Err(_) => None,
+        },
+    }
+}
+
+fn env_tls() -> bool {
+    match std::env::var("MAILIAM_TLS").or_else(|_| std::env::var("STALWART_TLS")) {
+        Ok(raw) => matches!(raw.to_ascii_lowercase().as_str(), "1" | "true"),
+        Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_port_from_unset_zero_and_garbage() {
+        assert_eq!(env_port_from(None, 143), Some(143));
+        assert_eq!(env_port_from(Some("587"), 143), Some(587));
+        assert_eq!(env_port_from(Some("0"), 143), None);
+        assert_eq!(env_port_from(Some("nope"), 143), None);
+        assert_eq!(env_port_from(Some(""), 143), None);
+    }
 }
