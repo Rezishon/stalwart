@@ -86,9 +86,9 @@ pub use psl;
 pub static VERSION_PRIVATE: &str = env!("STALWART_VERSION");
 pub static VERSION_PUBLIC: &str = "1.0.0";
 
-pub static USER_AGENT: &str = "Stalwart/1.0.0";
-pub static DAEMON_NAME: &str = concat!("Stalwart v", env!("STALWART_VERSION"),);
-pub static PROD_ID: &str = "-//Stalwart Labs LLC//Stalwart Server//EN";
+pub static USER_AGENT: &str = "MailiaM/1.0.0";
+pub static DAEMON_NAME: &str = concat!("MailiaM v", env!("STALWART_VERSION"),);
+pub static PROD_ID: &str = "-//RiseLabs//MailiaM Server//EN";
 
 /*
 
