@@ -34,6 +34,7 @@ profile stalwart flags=(attach_disconnected) {
   network inet stream bind port 995,
   network inet stream bind port 4190,
   network inet stream bind port 443,
+  network inet stream bind port 80,
   network inet stream bind port 8080,
   network inet6 stream bind port 25,
   network inet6 stream bind port 587,
@@ -44,6 +45,7 @@ profile stalwart flags=(attach_disconnected) {
   network inet6 stream bind port 995,
   network inet6 stream bind port 4190,
   network inet6 stream bind port 443,
+  network inet6 stream bind port 80,
   network inet6 stream bind port 8080,
 
   # Allow UDP port 7911
