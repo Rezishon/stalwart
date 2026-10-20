@@ -1601,12 +1601,13 @@ main() {
     fi
 
     create_account "$_os" "$_account"
-    say "Creating directories..."
+    say "${CLR_BLUE}[1/5]${CLR_RESET} Creating directories..."
     ensure mkdir -p "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir"
     ensure_conf_symlink
 
     if [ "$_install_mode" -ne 2 ]; then
         _from_ver="$(installed_version "${_existing_bin:-$_bin_file}")" || _from_ver=
+        say "${CLR_BLUE}[2/5]${CLR_RESET} Installing binary..."
         install_binary "$_target"
         _to_ver="$(installed_version "$_bin_file")" || _to_ver=
         [ -n "$_to_ver" ] || _to_ver="$_version"
@@ -1626,12 +1627,12 @@ main() {
             ;;
         *)
             ensure_generated_admin
-            say "Writing env file at ${_env_file}..."
+            say "${CLR_BLUE}[3/5]${CLR_RESET} Writing env file at ${_env_file}..."
             write_env_file "$_env_file"
             ;;
     esac
 
-    say "Setting permissions..."
+    say "${CLR_BLUE}[4/5]${CLR_RESET} Setting permissions..."
     ensure chown "${_account}:${_account}" "$_conf_dir" "$_log_dir" "$_data_dir"
     ensure chmod 0750 "$_conf_dir" "$_log_dir" "$_data_dir"
     if [ -e "$_env_file" ]; then
@@ -1641,23 +1642,23 @@ main() {
 
     case "${_init}" in
         systemd)
-            say "Installing systemd unit..."
+            say "${CLR_BLUE}[5/5]${CLR_RESET} Installing systemd unit..."
             create_service_linux_systemd "$_bin_file" "$_config_file" "$_env_file" "$_account"
             ;;
         sysv)
-            say "Installing SysV init script..."
+            say "${CLR_BLUE}[5/5]${CLR_RESET} Installing SysV init script..."
             create_service_linux_initd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
             ;;
         openrc)
-            say "Installing OpenRC service..."
+            say "${CLR_BLUE}[5/5]${CLR_RESET} Installing OpenRC service..."
             create_service_linux_openrc "$_bin_file" "$_config_file" "$_env_file" "$_account"
             ;;
         freebsd)
-            say "Installing FreeBSD rc.d script..."
+            say "${CLR_BLUE}[5/5]${CLR_RESET} Installing FreeBSD rc.d script..."
             create_service_freebsd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
             ;;
         *)
-            say "No init system detected; start ${_bin_file} --config=${_config_file} yourself."
+            say "${CLR_BLUE}[5/5]${CLR_RESET} No init system detected; start ${_bin_file} --config=${_config_file} yourself."
             ;;
     esac
     if [ "${_init}" != none ] && [ "${_SKIP_START:-0}" -eq 0 ]; then
