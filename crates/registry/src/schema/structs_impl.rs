@@ -4139,7 +4139,7 @@ impl Default for Bootstrap {
             request_tls_certificate: true,
             generate_dkim_keys: true,
             data_store: DataStore::RocksDb(RocksDbStore {
-                path: "/var/lib/stalwart/".to_string(),
+                path: "/var/lib/mailiam/".to_string(),
                 ..Default::default()
             }),
             blob_store: BlobStore::Default,
@@ -4147,7 +4147,8 @@ impl Default for Bootstrap {
             in_memory_store: InMemoryStore::Default,
             directory: DirectoryBootstrap::Internal,
             tracer: Tracer::Log(TracerLog {
-                path: "/var/log/stalwart/".to_string(),
+                path: "/var/log/mailiam/".to_string(),
+                prefix: "mailiam.log".to_string(),
                 ..Default::default()
             }),
             dns_server: DnsServerBootstrap::Manual,

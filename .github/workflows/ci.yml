@@ -198,7 +198,7 @@ jobs:
           rustup target add ${{matrix.target}}
           cargo build --release --target ${{matrix.target}} -p stalwart --no-default-features --features "sqlite postgres mysql rocks s3 redis azure nats enterprise"
           mkdir -p artifacts
-          mv ./target/${{matrix.target}}/release/stalwart.exe ./artifacts/stalwart.exe
+          mv ./target/${{matrix.target}}/release/mailiam.exe ./artifacts/mailiam.exe
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.1
@@ -262,7 +262,7 @@ jobs:
             export CARGO_NET_RETRY=10
             cargo build --release -p stalwart --no-default-features --features "sqlite postgres mysql rocks s3 redis azure nats enterprise"
             mkdir -p artifacts
-            cp /tmp/target/release/stalwart artifacts/stalwart
+            cp /tmp/target/release/mailiam artifacts/mailiam
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.1
@@ -290,8 +290,8 @@ jobs:
 
       - name: Stage Dockerfiles
         run: |
-          test -f archive/artifact-x86_64-unknown-linux-musl/stalwart
-          test -f archive/artifact-aarch64-unknown-linux-musl/stalwart
+          test -f archive/artifact-x86_64-unknown-linux-musl/mailiam
+          test -f archive/artifact-aarch64-unknown-linux-musl/mailiam
           cp Dockerfile.image archive/artifact-x86_64-unknown-linux-musl/Dockerfile
           cp Dockerfile.image archive/artifact-aarch64-unknown-linux-musl/Dockerfile
 
@@ -372,22 +372,28 @@ jobs:
         run: |
           set -eux
           BASE_DIR="$(pwd)/archive"
+          short_target() {
+              case "$1" in
+                  artifact-x86_64-unknown-linux-musl) echo x86_64-linux ;;
+                  artifact-aarch64-unknown-linux-musl) echo aarch64-linux ;;
+                  artifact-armv7-unknown-linux-musleabihf) echo armv7-linux ;;
+                  artifact-x86_64-unknown-freebsd) echo x86_64-freebsd ;;
+                  artifact-x86_64-pc-windows-msvc) echo x86_64-windows ;;
+                  *) echo "unknown artifact dir: $1" >&2; exit 1 ;;
+              esac
+          }
           PRODUCT=mailiam
           compress_files() {
               local dir="$1"
-              local archive_dir_name="${dir#artifact-}"
-              archive_dir_name="${archive_dir_name/-unknown-/-}"
-              archive_dir_name="${archive_dir_name/-linux-musleabihf/-linux}"
-              archive_dir_name="${archive_dir_name/-linux-musl/-linux}"
-              archive_dir_name="${archive_dir_name/-pc-windows-msvc/-windows}"
+              local short
+              short="$(short_target "$dir")"
               cd "$dir"
-              # Process each file in the directory
               for file in `ls`; do
                   extension="${file##*.}"
                   if [ "$extension" = "exe" ]; then
-                      7z a -tzip "${PRODUCT}-${archive_dir_name}.zip" "$file" > /dev/null
+                      7z a -tzip "${PRODUCT}-${short}.zip" "$file" > /dev/null
                   else
-                      tar -czf "${PRODUCT}-${archive_dir_name}.tar.gz" "$file"
+                      tar -czf "${PRODUCT}-${short}.tar.gz" "$file"
                   fi
               done
               cd $BASE_DIR

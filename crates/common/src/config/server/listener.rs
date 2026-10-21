@@ -61,17 +61,14 @@ impl Listeners {
                 }
             }
         } else {
+            let port = recovery_http_port();
             servers.parse_server(
                 bp,
                 RegistryObject {
                     id: ObjectId::new(ObjectType::NetworkListener, Id::singleton()),
                     object: NetworkListener {
                         bind: Map::new(vec![
-                            SocketAddr::from_str(&format!(
-                                "[::]:{}",
-                                crate::manager::defaults::recovery_http_port()
-                            ))
-                            .unwrap(),
+                            SocketAddr::from_str(&format!("[::]:{port}")).unwrap(),
                         ]),
                         name: "http-recovery".to_string(),
                         protocol: NetworkListenerProtocol::Http,
@@ -342,5 +339,42 @@ fn is_ipv6_unsupported(err: &std::io::Error) -> bool {
     #[cfg(not(any(unix, windows)))]
     {
         false
+    }
+}
+
+pub fn recovery_http_port() -> u16 {
+    recovery_http_port_from(
+        std::env::var("MAILIAM_RECOVERY_MODE_PORT").ok().as_deref(),
+        std::env::var("MAILIAM_LISTEN_HTTP").ok().as_deref(),
+    )
+}
+
+fn recovery_http_port_from(recovery_raw: Option<&str>, listen_http_raw: Option<&str>) -> u16 {
+    recovery_raw
+        .and_then(|s| s.parse::<u16>().ok())
+        .filter(|&p| p != 0)
+        .or_else(|| {
+            listen_http_raw
+                .and_then(|s| s.parse::<u16>().ok())
+                .filter(|&p| p != 0)
+        })
+        .unwrap_or(80)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_http_port_selection() {
+        assert_eq!(recovery_http_port_from(None, None), 80);
+        assert_eq!(recovery_http_port_from(Some("8081"), None), 8081);
+        assert_eq!(recovery_http_port_from(Some("8081"), Some("80")), 8081);
+        assert_eq!(recovery_http_port_from(None, Some("80")), 80);
+        assert_eq!(recovery_http_port_from(None, Some("8080")), 8080);
+        assert_eq!(recovery_http_port_from(Some("0"), Some("80")), 80);
+        assert_eq!(recovery_http_port_from(Some("invalid"), Some("80")), 80);
+        assert_eq!(recovery_http_port_from(None, Some("0")), 80);
+        assert_eq!(recovery_http_port_from(None, Some("garbage")), 80);
     }
 }

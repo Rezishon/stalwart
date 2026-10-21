@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
 #
 
-# Stalwart install script -- based on the rustup installation script.
+# MailiaM install script -- based on the rustup installation script.
 
 set -e
 set -u
@@ -76,6 +76,15 @@ validate_hostname() {
     return 0
 }
 
+validate_email() {
+    [ -n "$1" ] || return 1
+    contains_cr_lf_or_quote "$1" && return 1
+    case "$1" in
+        *@*.*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 validate_public_url() {
     case "$1" in
         https://?*|http://?*) return 0 ;;
@@ -103,7 +112,7 @@ validate_admin() {
 
 validate_mode() {
     case "$1" in
-        1|2|3) return 0 ;;
+        1|2|3|4) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -164,13 +173,13 @@ download_url() {
     case "$_src" in
         http://*) return 1 ;;
         https://*)
-            printf '%s\n' "${_src%/}/stalwart-${_target}.tar.gz"
+            printf '%s\n' "${_src%/}/mailiam-${_target}.tar.gz"
             ;;
         *)
             if [ "$_tag" = latest ]; then
-                printf '%s\n' "https://github.com/${_src}/releases/latest/download/stalwart-${_target}.tar.gz"
+                printf '%s\n' "https://github.com/${_src}/releases/latest/download/mailiam-${_target}.tar.gz"
             else
-                printf '%s\n' "https://github.com/${_src}/releases/download/${_tag}/stalwart-${_target}.tar.gz"
+                printf '%s\n' "https://github.com/${_src}/releases/download/${_tag}/mailiam-${_target}.tar.gz"
             fi
             ;;
     esac
@@ -184,26 +193,30 @@ resolve_paths() {
     fi
     if [ "$_prefix" = /usr/local ]; then
         _bin_dir=/usr/local/bin
-        _log_dir=/var/log/stalwart
+        _log_dir=/var/log/mailiam
         if [ "$_os" = freebsd ]; then
-            _conf_dir=/usr/local/etc/stalwart
-            _data_dir=/var/db/stalwart
+            _conf_dir=/usr/local/etc/mailiam
+            _data_dir=/var/db/mailiam
+            _legacy_conf=/usr/local/etc/stalwart
         else
-            _conf_dir=/etc/stalwart
-            _data_dir=/var/lib/stalwart
+            _conf_dir=/etc/mailiam
+            _data_dir=/var/lib/mailiam
+            _legacy_conf=/etc/stalwart
         fi
     else
         _bin_dir="${_prefix}/bin"
         _conf_dir="${_prefix}/etc"
         _log_dir="${_prefix}/logs"
         _data_dir="${_prefix}/data"
+        _legacy_conf=""
     fi
     if contains_cr_lf_or_quote "$_bin_dir" || contains_cr_lf_or_quote "$_conf_dir" \
-        || contains_cr_lf_or_quote "$_data_dir" || contains_cr_lf_or_quote "$_log_dir"; then
+        || contains_cr_lf_or_quote "$_data_dir" || contains_cr_lf_or_quote "$_log_dir" \
+        || contains_cr_lf_or_quote "$_legacy_conf"; then
         return 1
     fi
-    printf "_bin_dir='%s'\n_conf_dir='%s'\n_data_dir='%s'\n_log_dir='%s'\n" \
-        "$_bin_dir" "$_conf_dir" "$_data_dir" "$_log_dir"
+    printf "_bin_dir='%s'\n_conf_dir='%s'\n_data_dir='%s'\n_log_dir='%s'\n_legacy_conf='%s'\n" \
+        "$_bin_dir" "$_conf_dir" "$_data_dir" "$_log_dir" "$_legacy_conf"
 }
 
 upsert_env() {
@@ -246,7 +259,7 @@ prompt_value() {
     _pv_err="$4"
     _pv_label="$5"
     while :; do
-        prompt_read "${_pv_label} (Default: ${_pv_def}): "
+        prompt_read "$(fmt_prompt "$_pv_label" "$_pv_def")"
         [ -n "$_prompt_ans" ] || _prompt_ans="$_pv_def"
         if "$_pv_fn" "$_prompt_ans"; then
             eval "$_pv_var=\"\$_prompt_ans\""
@@ -262,7 +275,7 @@ prompt_port() {
     _pp_label="$3"
     _pp_nodup="${4:-}"
     while :; do
-        prompt_read "${_pp_label} (Default: ${_pp_def}): "
+        prompt_read "$(fmt_prompt "$_pp_label" "$_pp_def")"
         [ -n "$_prompt_ans" ] || _prompt_ans="$_pp_def"
         if ! validate_port "$_prompt_ans"; then
             printf '%s\n' "Port must be an integer 0-65535."
@@ -287,7 +300,7 @@ prompt_yes_no() {
     _pyn_def="$2"
     _pyn_label="$3"
     while :; do
-        prompt_read "${_pyn_label} (Default: ${_pyn_def}): "
+        prompt_read "$(fmt_prompt "$_pyn_label" "$_pyn_def")"
         [ -n "$_prompt_ans" ] || _prompt_ans="$_pyn_def"
         if validate_yes_no "$_prompt_ans"; then
             eval "$_pyn_var=\"\$_prompt_ans\""
@@ -304,72 +317,643 @@ is_yes() {
     esac
 }
 
+generate_password() {
+    od -An -N8 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+ensure_generated_admin() {
+    if [ -n "${_admin:-}" ] && [ "$_admin" != random ]; then
+        return 0
+    fi
+    _gp=$(generate_password)
+    [ "${#_gp}" -eq 16 ] || err "Failed to generate admin password."
+    _admin="admin:${_gp}"
+}
+
+CLR_RED=
+CLR_BOLD=
+CLR_BLUE=
+CLR_DIM=
+CLR_ITALIC=
+CLR_HINT=
+CLR_URL=
+CLR_GREEN=
+CLR_RESET=
+
+init_colors() {
+    if [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = dumb ] || [ ! -t 1 ]; then
+        CLR_RED=
+        CLR_BOLD=
+        CLR_BLUE=
+        CLR_DIM=
+        CLR_ITALIC=
+        CLR_HINT=
+        CLR_URL=
+        CLR_GREEN=
+        CLR_RESET=
+        return 0
+    fi
+    CLR_RED=$(printf '\033[1;31m')
+    CLR_BOLD=$(printf '\033[1m')
+    CLR_BLUE=$(printf '\033[94m')
+    CLR_DIM=$(printf '\033[2m')
+    CLR_ITALIC=$(printf '\033[3m')
+    CLR_HINT=$(printf '\033[2;3m')
+    CLR_URL=$(printf '\033[1;94m')
+    CLR_GREEN=$(printf '\033[1;32m')
+    CLR_RESET=$(printf '\033[0m')
+}
+
+fmt_prompt() {
+    printf '%s%s%s %s(Default: %s)%s: ' \
+        "$CLR_BOLD" "$1" "$CLR_RESET" "$CLR_HINT" "$2" "$CLR_RESET"
+}
+
+clear_step() {
+    if [ -t 0 ] && [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+        printf '\033[H\033[2J'
+        print_banner
+    fi
+}
+
+say_header() {
+    printf '%s%s%s\n' "$CLR_BOLD" "$1" "$CLR_RESET"
+}
+
+say_hint() {
+    printf '%s%s%s\n' "$CLR_HINT" "$1" "$CLR_RESET"
+}
+
+say_opt() {
+    if [ -n "${3:-}" ]; then
+        printf '  %s%s)%s %s %s(%s)%s\n' \
+            "$CLR_BLUE" "$1" "$CLR_RESET" "$2" "$CLR_HINT" "$3" "$CLR_RESET"
+    else
+        printf '  %s%s)%s %s\n' "$CLR_BLUE" "$1" "$CLR_RESET" "$2"
+    fi
+}
+
+print_hr() {
+    printf '%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' \
+        "$CLR_DIM" "$CLR_RESET"
+}
+
+hostname_default() {
+    case "$1" in
+        *.*) printf '%s\n' "$1" ;;
+        *) printf '%s\n' mail.localhost ;;
+    esac
+}
+
+tag_from_release_url() {
+    case "$1" in
+        */releases/tag/*) printf '%s\n' "${1##*/}" ;;
+        *) printf '%s\n' latest ;;
+    esac
+}
+
+prompt_choice() {
+    _pc_var="$1"
+    _pc_def="$2"
+    _pc_max="$3"
+    _pc_label="$4"
+    while :; do
+        prompt_read "$(fmt_prompt "$_pc_label" "$_pc_def")"
+        [ -n "$_prompt_ans" ] || _prompt_ans="$_pc_def"
+        case "$_prompt_ans" in
+            *[!0-9]*|'') ;;
+            *)
+                if [ "$_prompt_ans" -ge 1 ] && [ "$_prompt_ans" -le "$_pc_max" ]; then
+                    eval "$_pc_var=\"\$_prompt_ans\""
+                    return 0
+                fi
+                ;;
+        esac
+        printf 'Choose 1-%s.\n' "$_pc_max"
+    done
+}
+
 prompt_admin() {
     _pa_keep=0
     [ "${1:-}" = keep ] && _pa_keep=1
-    while :; do
+    clear_step
+    say_header "Admin WebUI credentials:"
+    say_hint "Initial administrator account for the web management console (/admin)."
+    say ""
+    say_header "Select admin setup:"
+    if [ "$_pa_keep" -eq 1 ]; then
+        say_opt 1 "Keep existing admin password" "Default"
+        say_opt 2 "Set custom username and password"
+    else
+        say_opt 1 "Auto-generate secure password" "Default: user 'admin'"
+        say_opt 2 "Set custom username and password"
+    fi
+    prompt_choice _pa_choice 1 2 "Choice [1-2]"
+    if [ "$_pa_choice" = 1 ]; then
         if [ "$_pa_keep" -eq 1 ]; then
-            prompt_read "Admin bootstrap credential [username:password or 'random'] (Default: keep existing): "
+            _admin=
         else
-            prompt_read "Admin bootstrap credential [username:password or 'random'] (Default: random): "
+            ensure_generated_admin
         fi
-        if [ -z "$_prompt_ans" ]; then
-            if [ "$_pa_keep" -eq 1 ]; then
-                _admin=
-                return 0
-            fi
-            _prompt_ans=random
-        fi
-        if [ "$_prompt_ans" = random ]; then
-            _admin=random
-            return 0
-        fi
+        return 0
+    fi
+    clear_step
+    prompt_value _admin_user admin validate_user "Invalid username." "Admin username"
+    clear_step
+    while :; do
+        prompt_read "${CLR_BOLD}Admin password${CLR_RESET}: "
         if contains_cr_lf_or_quote "$_prompt_ans"; then
-            printf '%s\n' "Credential must be username:password or 'random'."
+            printf '%s\n' "Password must not contain quotes or newlines."
             continue
         fi
-        case "$_prompt_ans" in
-            *:*) ;;
-            *)
-                printf '%s\n' "Credential must be username:password or 'random'."
-                continue
-                ;;
-        esac
-        _admin_user="${_prompt_ans%%:*}"
-        _admin_pass="${_prompt_ans#*:}"
-        if [ -z "$_admin_user" ] || ! printf '%s' "$_admin_user" | grep -Eq '^[A-Za-z0-9_-]+$'; then
-            printf '%s\n' "Username must be alphanumeric, underscore, or hyphen."
-            continue
-        fi
-        if [ "${#_admin_pass}" -lt 12 ]; then
+        if [ "${#_prompt_ans}" -lt 12 ]; then
             printf '%s\n' "Password must be at least 12 characters."
             continue
         fi
-        _admin="$_prompt_ans"
+        _admin="${_admin_user}:${_prompt_ans}"
         return 0
     done
 }
 
+detect_installed_bin() {
+    if [ -e "${_bin_dir}/mailiam" ]; then
+        printf '%s\n' "${_bin_dir}/mailiam"
+        return 0
+    fi
+    if [ -e "${_bin_dir}/stalwart" ]; then
+        printf '%s\n' "${_bin_dir}/stalwart"
+        return 0
+    fi
+    [ "$_bin_dir" = /usr/local/bin ] || return 1
+    _p=$(command -v mailiam 2>/dev/null) || _p=
+    if [ -n "$_p" ] && [ -e "$_p" ]; then
+        printf '%s\n' "$_p"
+        return 0
+    fi
+    _p=$(command -v stalwart 2>/dev/null) || _p=
+    if [ -n "$_p" ] && [ -e "$_p" ]; then
+        printf '%s\n' "$_p"
+        return 0
+    fi
+    return 1
+}
+
+installed_version() {
+    if [ -x "$1" ]; then
+        "$1" --version 2>/dev/null | awk '{print $NF; exit}'
+    fi
+}
+
+latest_release_tag() {
+    _lr_url=$(curl -sIL -o /dev/null -w '%{url_effective}\n' \
+        "https://github.com/${1}/releases/latest" 2>/dev/null) || _lr_url=
+    [ -n "$_lr_url" ] || { printf '%s\n' latest; return 0; }
+    tag_from_release_url "$_lr_url"
+}
+
 prompt_mode() {
-    say "  1) Update binary only (preserves existing config, env, and database)"
-    say "  2) Reconfigure environment (re-prompts settings and updates stalwart.env)"
-    say "  3) Fresh install (overwrites binary and recreates stalwart.env)"
-    while :; do
-        prompt_read "Existing Stalwart installation detected. Choose action [1-3] (Default: 1): "
-        [ -n "$_prompt_ans" ] || _prompt_ans=1
-        if validate_mode "$_prompt_ans"; then
-            _install_mode="$_prompt_ans"
+    _pm_bin="${1:-$_bin_file}"
+    _pm_ver="$(installed_version "$_pm_bin")"
+    _pm_latest="$(latest_release_tag "${_repo:-Rezishon/stalwart}")"
+    clear_step
+    say_header "Current installation detected:"
+    printf '  - Binary:   %s' "$_pm_bin"
+    if [ -n "$_pm_ver" ]; then
+        printf ' %s(version %s)%s' "$CLR_HINT" "$_pm_ver" "$CLR_RESET"
+    fi
+    printf '\n'
+    printf '  - Config:   %s\n' "$_conf_dir"
+    printf '  - Database: %s\n' "$_data_dir"
+    if [ -n "$_pm_latest" ] && [ "$_pm_latest" != latest ] && [ -n "$_pm_ver" ] \
+        && [ "$_pm_latest" != "$_pm_ver" ] && [ "$_pm_latest" != "v${_pm_ver}" ]; then
+        printf '  - Status:   %sUpdate available: %s%s\n' "$CLR_URL" "$_pm_latest" "$CLR_RESET"
+        _pm_opt1="Update binary to ${_pm_latest}"
+    else
+        printf '  - Status:   You are currently running the latest version.\n'
+        _pm_opt1="Update binary"
+        _pm_latest=latest
+    fi
+    say ""
+    say_header "Select action:"
+    say_opt 1 "$_pm_opt1" "Default - keeps config & mail data safe"
+    say_opt 2 "Reconfigure server settings" "Update domain, ports, TLS, or admin"
+    say_opt 3 "Fresh reinstall" "Clean install - resets configuration"
+    say_opt 4 "Uninstall MailiaM" "Remove binary, service, and optional data"
+    prompt_choice _install_mode 1 4 "Choice [1-4]"
+    _update_target="$_pm_latest"
+}
+
+prompt_uninstall_purge() {
+    clear_step
+    say_header "Data removal options:"
+    say_opt 1 "Keep config and mail data" "Default - preserves data & config"
+    say_opt 2 "Purge all data, config, and logs" "Completely remove all MailiaM files"
+    if [ "${_purge:-0}" -eq 1 ]; then
+        _pup_def=2
+    else
+        _pup_def=1
+    fi
+    prompt_choice _purge_choice "$_pup_def" 2 "Choice [1-2]"
+    if [ "$_purge_choice" = 2 ]; then
+        _purge=1
+    else
+        _purge=0
+    fi
+}
+
+prompt_source() {
+    clear_step
+    if [ "${_install_mode:-0}" -eq 0 ]; then
+        say_header "Welcome to MailiaM."
+        say_hint "Fresh install. No existing binary found at ${_bin_file}."
+        say ""
+    fi
+    say_header "Select download source:"
+    say_opt 1 "GitHub repository" "Default: ${_repo:-Rezishon/stalwart}"
+    say_opt 2 "Custom HTTPS URL"
+    say_opt 3 "Local archive file"
+    if [ -n "$_file" ]; then
+        _src_def=3
+    else
+        _src_def=1
+    fi
+    prompt_choice _src_choice "$_src_def" 3 "Choice [1-3]"
+    case "$_src_choice" in
+        1)
+            clear_step
+            prompt_value _repo "${_repo:-Rezishon/stalwart}" validate_source \
+                "Invalid download source." "GitHub repository [owner/repo]"
+            _file=
+            ;;
+        2)
+            clear_step
+            prompt_value _repo "https://example.com/releases" validate_source \
+                "Invalid download source." "HTTPS URL (e.g. https://example.com/releases)"
+            _file=
+            ;;
+        3)
+            clear_step
+            prompt_value _file "${_file:-/path/to/mailiam.tar.gz}" validate_source \
+                "Invalid download source." "Local archive path (e.g. /path/to/mailiam.tar.gz)"
+            ;;
+    esac
+}
+
+prompt_paths() {
+    clear_step
+    say_header "Installation paths:"
+    printf '  - Binary:  %s\n' "$_bin_file"
+    printf '  - Config:  %s\n' "$_conf_dir"
+    printf '  - Data:    %s\n' "$_data_dir"
+    printf '  - Logs:    %s\n' "$_log_dir"
+    say ""
+    say_header "Select installation path:"
+    say_opt 1 "Standard system paths" "Default"
+    say_opt 2 "Single base path" "e.g. /opt/mailiam"
+    say_opt 3 "Advanced: customize each path"
+    prompt_choice _path_choice 1 3 "Choice [1-3]"
+    case "$_path_choice" in
+        2)
+            clear_step
+            prompt_value _prefix /opt/mailiam validate_prefix "Invalid prefix." \
+                "Base directory path"
+            apply_paths
+            ;;
+        3)
+            clear_step
+            prompt_value _bin_dir "$_bin_dir" validate_prefix "Invalid path." "Binary directory"
+            clear_step
+            prompt_value _conf_dir "$_conf_dir" validate_prefix "Invalid path." "Config directory"
+            clear_step
+            prompt_value _data_dir "$_data_dir" validate_prefix "Invalid path." "Data directory"
+            clear_step
+            prompt_value _log_dir "$_log_dir" validate_prefix "Invalid path." "Log directory"
+            _bin_file="${_bin_dir}/mailiam"
+            _bin_legacy="${_bin_dir}/stalwart"
+            _config_file="${_conf_dir}/config.json"
+            set_env_file
+            ;;
+    esac
+}
+
+prompt_ports() {
+    clear_step
+    say_header "Network listener ports:"
+    printf '  - SMTP:         %-6s %s(Mail delivery)%s\n' "$_listen_smtp" "$CLR_HINT" "$CLR_RESET"
+    printf '  - SMTPS:        %-6s %s(Client send, TLS)%s\n' "$_listen_submissions" "$CLR_HINT" "$CLR_RESET"
+    printf '  - Submission:   %-6s %s(Client send, STARTTLS)%s\n' "$_listen_submission" "$CLR_HINT" "$CLR_RESET"
+    printf '  - IMAP:         %-6s %s(Mail access)%s\n' "$_listen_imap" "$CLR_HINT" "$CLR_RESET"
+    printf '  - POP3:         %-6s %s(Legacy access)%s\n' "$_listen_pop3" "$CLR_HINT" "$CLR_RESET"
+    printf '  - ManageSieve:  %-6s %s(Mail filtering)%s\n' "$_listen_sieve" "$CLR_HINT" "$CLR_RESET"
+    printf '  - HTTP:         %-6s %s(Web / ACME challenges)%s\n' "$_listen_http" "$CLR_HINT" "$CLR_RESET"
+    printf '  - HTTPS:        %-6s %s(Relay SPA / WebUI / JMAP)%s\n' "$_listen_https" "$CLR_HINT" "$CLR_RESET"
+    say ""
+    say_header "Select port configuration:"
+    say_opt 1 "Use standard ports" "Default"
+    say_opt 2 "Advanced: customize individual ports"
+    prompt_choice _port_choice 1 2 "Choice [1-2]"
+    if [ "$_port_choice" = 2 ]; then
+        _used_ports=
+        clear_step
+        prompt_port _listen_smtp "$_listen_smtp" "SMTP port"
+        clear_step
+        prompt_port _listen_submissions "$_listen_submissions" "SMTPS port"
+        clear_step
+        prompt_port _listen_submission "$_listen_submission" "Submission port"
+        clear_step
+        prompt_port _listen_imap "$_listen_imap" "IMAP port"
+        clear_step
+        prompt_port _listen_pop3 "$_listen_pop3" "POP3 port"
+        clear_step
+        prompt_port _listen_sieve "$_listen_sieve" "ManageSieve port"
+        clear_step
+        prompt_port _listen_http "$_listen_http" "HTTP port"
+        clear_step
+        prompt_port _listen_https "$_listen_https" "HTTPS port"
+    fi
+}
+
+prompt_tls() {
+    clear_step
+    say_header "TLS / SSL encryption:"
+    say_opt 1 "Automatic Let's Encrypt (ACME)" "Default"
+    say_opt 2 "Custom certificate files" "Path to .crt and .key"
+    say_opt 3 "Disabled / Plaintext" "Only if behind reverse proxy"
+    prompt_choice _tls_choice 1 3 "Choice [1-3]"
+    case "$_tls_choice" in
+        1)
+            _tls=true
+            _tls_mode="Automatic Let's Encrypt (ACME)"
+            clear_step
+            prompt_value _acme_email "admin@${_hostname}" validate_email \
+                "Invalid email." "ACME contact email"
+            ;;
+        2)
+            _tls=true
+            _tls_mode="Custom certificate files"
+            clear_step
+            prompt_value _tls_cert /etc/ssl/certs/fullchain.pem validate_prefix \
+                "Invalid path." "TLS certificate path"
+            clear_step
+            prompt_value _tls_key /etc/ssl/private/privkey.pem validate_prefix \
+                "Invalid path." "TLS private key path"
+            ;;
+        3)
+            _tls=false
+            _tls_mode="Disabled / Plaintext"
+            ;;
+    esac
+}
+
+prompt_public_url_step() {
+    set_public_url_default
+    clear_step
+    prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
+        "Public web URL (/admin, /account, DeltaChat)"
+}
+
+print_box_title() {
+    print_hr
+    printf '%s%s%s\n' "$CLR_BOLD" "$1" "$CLR_RESET"
+    print_hr
+}
+
+src_display() {
+    if [ -n "$_file" ]; then
+        printf '%s\n' "$_file"
+    else
+        printf '%s (%s)\n' "$_repo" "$_version"
+    fi
+}
+
+print_install_summary() {
+    clear_step
+    print_box_title "                    MailiaM Installation Summary"
+    printf '  Download Source:   %s\n' "$(src_display)"
+    printf '  Install Base:      %s (Binary: %s)\n' "$_prefix" "$_bin_file"
+    printf '  Service User:      %s (unprivileged)\n' "$_account"
+    printf '  Web URL:           %s%s%s\n' "$CLR_URL" "$_public_url" "$CLR_RESET"
+    say ""
+    say_header "  Active Listeners:"
+    printf '    - SMTP (MTA):    Port %s\n' "$_listen_smtp"
+    printf '    - SMTPS:         Port %s (Implicit TLS)\n' "$_listen_submissions"
+    printf '    - Submission:    Port %s (STARTTLS)\n' "$_listen_submission"
+    printf '    - IMAP:          Port %s\n' "$_listen_imap"
+    printf '    - ManageSieve:   Port %s\n' "$_listen_sieve"
+    printf '    - Web (HTTP):    Port %s\n' "$_listen_http"
+    printf '    - Web (HTTPS):   Port %s\n' "$_listen_https"
+    say ""
+    printf '  %sTLS / SSL:%s         %s\n' "$CLR_BOLD" "$CLR_RESET" "${_tls_mode:-$_tls}"
+    say ""
+    if [ "$_admin" = random ] || [ -z "${_admin:-}" ]; then
+        printf '  %sAdmin Account:%s     admin (password generated next)\n' \
+            "$CLR_BOLD" "$CLR_RESET"
+    else
+        printf '  %sAdmin Account:%s     %s\n' \
+            "$CLR_BOLD" "$CLR_RESET" "${_admin%%:*}"
+    fi
+    if [ "${_SKIP_START:-0}" -eq 0 ]; then
+        printf '  %sService Start:%s     Yes (%s)\n' "$CLR_BOLD" "$CLR_RESET" "${_init:-none}"
+    else
+        printf '  %sService Start:%s     No\n' "$CLR_BOLD" "$CLR_RESET"
+    fi
+    print_hr
+}
+
+print_update_summary() {
+    clear_step
+    print_box_title "                    MailiaM Binary Update Summary"
+    printf '  Current Binary:    %s' "${_existing_bin:-$_bin_file}"
+    _uv="$(installed_version "${_existing_bin:-$_bin_file}")"
+    if [ -n "$_uv" ]; then
+        printf ' %s(version %s)%s' "$CLR_HINT" "$_uv" "$CLR_RESET"
+    fi
+    printf '\n'
+    printf '  Target Version:    %s %s(from %s)%s\n' \
+        "$_version" "$CLR_HINT" "${_file:-$_repo}" "$CLR_RESET"
+    printf '  Config & Env:      %sPreserved%s %s(%s)%s\n' \
+        "$CLR_GREEN" "$CLR_RESET" "$CLR_HINT" "$_conf_dir" "$CLR_RESET"
+    printf '  Mail Database:     %sPreserved%s %s(%s)%s\n' \
+        "$CLR_GREEN" "$CLR_RESET" "$CLR_HINT" "$_data_dir" "$CLR_RESET"
+    if [ "${_SKIP_START:-0}" -eq 0 ]; then
+        printf '  Service Action:    Restart mailiam service\n'
+    else
+        printf '  Service Action:    Leave service stopped\n'
+    fi
+    print_hr
+}
+
+is_system_account() {
+    [ -n "${1:-}" ] || return 1
+    case "$1" in
+        root|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|nobody|operator|adm|wheel|kmem|sshd|messagebus)
             return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+print_uninstall_summary() {
+    clear_step
+    print_box_title "                    MailiaM Uninstall Summary"
+    printf '  Binary Path:       %s %s(Removed)%s\n' "$_bin_file" "$CLR_HINT" "$CLR_RESET"
+    case "${_init:-none}" in
+        systemd) _svc_disp="mailiam.service (Stopped & Removed)" ;;
+        sysv) _svc_disp="/etc/init.d/mailiam (Stopped & Removed)" ;;
+        openrc) _svc_disp="mailiam (Stopped & Removed)" ;;
+        freebsd) _svc_disp="/usr/local/etc/rc.d/mailiam (Stopped & Removed)" ;;
+        *) _svc_disp="None" ;;
+    esac
+    printf '  Service Unit:      %s\n' "$_svc_disp"
+    printf '  Service User:      %s %s(Removed)%s\n' "$_account" "$CLR_HINT" "$CLR_RESET"
+    if [ "${_purge:-0}" -eq 1 ]; then
+        _data_disp="${CLR_RED}(Purged)${CLR_RESET}"
+    else
+        _data_disp="${CLR_GREEN}(Preserved)${CLR_RESET}"
+    fi
+    printf '  Config & Env:      %s %s\n' "$_conf_dir" "$_data_disp"
+    printf '  Mail Database:     %s %s\n' "$_data_dir" "$_data_disp"
+    printf '  Log Directory:     %s %s\n' "$_log_dir" "$_data_disp"
+    printf '  Uninstall Log:     /tmp/mailiam-uninstall.log\n'
+    print_hr
+}
+
+print_install_success() {
+    if [ -n "${_admin:-}" ] && [ "$_admin" != random ]; then
+        _pw_user="${_admin%%:*}"
+        _pw="${_admin#*:}"
+    else
+        _pw_user=admin
+        _pw="(see MAILIAM_RECOVERY_ADMIN in ${_env_file})"
+    fi
+    say ""
+    print_box_title "                  MailiaM Installed Successfully"
+    say ""
+    say_header "  Admin Web Console:"
+    printf '    URL:             %s%s/admin%s\n' "$CLR_URL" "$_public_url" "$CLR_RESET"
+    printf '    Username:        %s\n' "$_pw_user"
+    printf '    Password:        %s%s%s\n' "$CLR_GREEN" "$_pw" "$CLR_RESET"
+    say ""
+    say_header "  User Portal & Web Apps:"
+    printf '    DeltaChat Relay: %s%s/%s\n' "$CLR_URL" "$_public_url" "$CLR_RESET"
+    printf '    User Account:    %s%s/account%s\n' "$CLR_URL" "$_public_url" "$CLR_RESET"
+    say ""
+    say_header "  Useful Commands:"
+    print_service_hints
+    printf '    Config file:     %s\n' "$_env_file"
+    say ""
+    print_hr
+}
+
+print_update_success() {
+    _from="${_from_ver:-unknown}"
+    _to="${_to_ver:-$_version}"
+    [ -n "$_to" ] || _to=unknown
+    say ""
+    print_box_title "                    MailiaM Updated Successfully"
+    say ""
+    printf '  %sInstalled Version:%s  %s%s => %s%s\n' \
+        "$CLR_BOLD" "$CLR_RESET" "$CLR_URL" "$_from" "$_to" "$CLR_RESET"
+    printf '  %sBinary Path:%s        %s\n' "$CLR_BOLD" "$CLR_RESET" "$_bin_file"
+    printf '  %sService Status:%s     updated\n' "$CLR_BOLD" "$CLR_RESET"
+    say ""
+    say_header "  Useful Commands:"
+    print_service_hints
+    say ""
+    print_hr
+}
+
+print_uninstall_success() {
+    say ""
+    if [ "${_step_failures:-0}" -gt 0 ]; then
+        print_box_title "       MailiaM Uninstallation Completed with Warnings"
+        say ""
+        printf '  Status:            Completed with warnings - see /tmp/mailiam-uninstall.log\n'
+    else
+        print_box_title "                  MailiaM Uninstalled Successfully"
+        say ""
+    fi
+    printf '  Binary & Services: Removed\n'
+    if is_system_account "${_account:-}"; then
+        printf '  Service Account:   %s (preserved - system account)\n' "$_account"
+    else
+        printf '  Service Account:   %s (removed)\n' "$_account"
+    fi
+    if [ "${_purge:-0}" -eq 1 ]; then
+        printf '  Mail Data & Conf:  %sPurged%s\n' "$CLR_RED" "$CLR_RESET"
+    else
+        printf '  Mail Data & Conf:  Preserved in %s and %s\n' "$_data_dir" "$_conf_dir"
+    fi
+    printf '  Uninstall Log:     /tmp/mailiam-uninstall.log\n'
+    say ""
+    print_hr
+}
+
+confirm_or_abort() {
+    _coa_def="${2:-Y}"
+    say ""
+    prompt_yes_no _go "$_coa_def" "$1"
+    if ! is_yes "$_go"; then
+        say "Aborted. No changes were made."
+        exit 0
+    fi
+}
+
+ensure_bin_symlink() {
+    if [ -n "${_bin_legacy:-}" ] && [ "$_bin_legacy" != "$_bin_file" ]; then
+        if [ -e "$_bin_legacy" ] && [ ! -L "$_bin_legacy" ]; then
+            if [ ! -e "$_bin_file" ]; then
+                mv "$_bin_legacy" "$_bin_file"
+            else
+                rm -f "$_bin_legacy"
+            fi
         fi
-        printf '%s\n' "Choose 1, 2, or 3."
-    done
+        ln -sfn mailiam "$_bin_legacy"
+    fi
+}
+
+ensure_conf_symlink() {
+    [ -n "${_legacy_conf:-}" ] || return 0
+    if [ ! -e "$_legacy_conf" ]; then
+        ln -sfn mailiam "$_legacy_conf"
+    fi
+}
+
+adopt_existing_layout() {
+    [ "$_prefix" = /usr/local ] || return 0
+    [ -d "$_conf_dir" ] && return 0
+    if [ "$_os" = freebsd ]; then
+        _old_conf=/usr/local/etc/stalwart
+        _old_data=/var/db/stalwart
+    else
+        _old_conf=/etc/stalwart
+        _old_data=/var/lib/stalwart
+    fi
+    _old_log=/var/log/stalwart
+    if [ -d "$_old_conf" ] && [ ! -L "$_old_conf" ]; then
+        _conf_dir="$_old_conf"
+        [ -d "$_old_data" ] && _data_dir="$_old_data"
+        [ -d "$_old_log" ] && _log_dir="$_old_log"
+        _config_file="${_conf_dir}/config.json"
+        set_env_file
+    fi
+}
+
+set_env_file() {
+    _env_file="${_conf_dir}/mailiam.env"
+    if [ ! -e "$_env_file" ] && [ -e "${_conf_dir}/stalwart.env" ]; then
+        _env_file="${_conf_dir}/stalwart.env"
+    fi
 }
 
 apply_paths() {
     eval "$(resolve_paths "$_prefix" "$_os")" || err "Invalid prefix: $_prefix"
-    _bin_file="${_bin_dir}/stalwart"
+    _bin_file="${_bin_dir}/mailiam"
+    _bin_legacy="${_bin_dir}/stalwart"
     _config_file="${_conf_dir}/config.json"
-    _env_file="${_conf_dir}/stalwart.env"
+    set_env_file
 }
 
 apply_source() {
@@ -409,9 +993,9 @@ comment_env_key() {
 
 apply_mode2_admin() {
     if [ -n "$_admin" ] && [ "$_admin" != random ]; then
-        upsert_env "$1" STALWART_RECOVERY_ADMIN "$_admin"
+        upsert_env "$1" MAILIAM_RECOVERY_ADMIN "$_admin"
     elif [ "$_admin" = random ]; then
-        comment_env_key "$1" STALWART_RECOVERY_ADMIN
+        comment_env_key "$1" MAILIAM_RECOVERY_ADMIN
     fi
 }
 
@@ -437,9 +1021,22 @@ read_env_key() {
     printf '%s\n' "$_rek_val"
 }
 
+read_env_key_mail() { # file new old
+    read_env_key "$1" "$2" || read_env_key "$1" "$3"
+}
+
 set_public_url_default() {
-    if [ -z "$_public_url" ]; then
-        if [ "$_listen_https" != 443 ] && [ -n "$_listen_https" ]; then
+    if [ -n "$_public_url" ]; then
+        return 0
+    fi
+    if [ "$_tls" = false ] || [ "$_tls" = 0 ]; then
+        if [ -n "$_listen_http" ] && [ "$_listen_http" != 80 ]; then
+            _public_url="http://${_hostname}:${_listen_http}"
+        else
+            _public_url="http://${_hostname}"
+        fi
+    else
+        if [ -n "$_listen_https" ] && [ "$_listen_https" != 443 ]; then
             _public_url="https://${_hostname}:${_listen_https}"
         else
             _public_url="https://${_hostname}"
@@ -450,18 +1047,18 @@ set_public_url_default() {
 seed_mode2_from_env() {
     _v=
     if [ -z "${_hostname_arg:-}" ]; then
-        _v="$(read_env_key "$_env_file" STALWART_HOSTNAME)" || _v=
+        _v="$(read_env_key_mail "$_env_file" MAILIAM_HOSTNAME STALWART_HOSTNAME)" || _v=
         if [ -n "$_v" ] && validate_hostname "$_v"; then
             _hostname="$_v"
         fi
     fi
     if [ -z "${_public_url_arg:-}" ]; then
-        _v="$(read_env_key "$_env_file" STALWART_PUBLIC_URL)" || _v=
+        _v="$(read_env_key_mail "$_env_file" MAILIAM_PUBLIC_URL STALWART_PUBLIC_URL)" || _v=
         if [ -n "$_v" ] && validate_public_url "$_v"; then
             _public_url="$_v"
         else
             _public_url=
-            _v="$(read_env_key "$_env_file" STALWART_LISTEN_HTTPS)" || _v=
+            _v="$(read_env_key_mail "$_env_file" MAILIAM_LISTEN_HTTPS STALWART_LISTEN_HTTPS)" || _v=
             if validate_port "$_v"; then
                 _listen_https="$_v"
             fi
@@ -472,11 +1069,22 @@ seed_mode2_from_env() {
 set_dc_defaults() {
     [ -n "$_dc_imap_host" ] || _dc_imap_host="$_hostname"
     [ -n "$_dc_smtp_host" ] || _dc_smtp_host="$_hostname"
-    [ -n "$_dc_imap_port" ] || _dc_imap_port="$_listen_imap"
-    [ -n "$_dc_smtp_port" ] || _dc_smtp_port="$_listen_submissions"
+    if [ "$_tls" = false ] || [ "$_tls" = 0 ]; then
+        [ -n "$_dc_imap_port" ] || _dc_imap_port=143
+        [ -n "$_dc_smtp_port" ] || _dc_smtp_port=587
+        [ -n "$_dc_imap_security" ] || _dc_imap_security=plain
+        [ -n "$_dc_smtp_security" ] || _dc_smtp_security=plain
+        [ -n "$_dc_ic" ] || _dc_ic=0
+    else
+        [ -n "$_dc_imap_port" ] || _dc_imap_port=993
+        [ -n "$_dc_smtp_port" ] || _dc_smtp_port=465
+        [ -n "$_dc_imap_security" ] || _dc_imap_security=ssl
+        [ -n "$_dc_smtp_security" ] || _dc_smtp_security=ssl
+        [ -n "$_dc_ic" ] || _dc_ic=3
+    fi
 }
 
-extract_stalwart() {
+extract_mailiam() {
     _tar="$1"
     _outdir="$2"
     _member=
@@ -487,21 +1095,114 @@ extract_stalwart() {
             *..*|/*)
                 err "Archive contains an unsafe path."
                 ;;
-            stalwart|./stalwart)
+            mailiam|./mailiam|stalwart|./stalwart)
                 _member="$_n"
                 _n_members=$((_n_members + 1))
                 ;;
             *)
-                err "Archive must contain only stalwart."
+                err "Archive must contain only mailiam."
                 ;;
         esac
     done <<EOF
 $(tar -t -f "$_tar")
 EOF
-    [ "$_n_members" -eq 1 ] && [ -n "$_member" ] || err "Archive must contain only stalwart."
+    [ "$_n_members" -eq 1 ] && [ -n "$_member" ] || err "Archive must contain only mailiam."
     ensure tar --no-same-owner -xf "$_tar" -C "$_outdir" "$_member"
-    _extracted="${_outdir}/stalwart"
-    [ -f "$_extracted" ] && [ ! -L "$_extracted" ] || err "Archive member must be a regular file named stalwart."
+    _extracted="${_outdir}/${_member#./}"
+    [ -f "$_extracted" ] && [ ! -L "$_extracted" ] || err "Archive member must be a regular file named mailiam."
+}
+
+# Same-dir rename unlinks a running dest (ETXTBSY). Cross-device cp onto an
+# executing inode fails; this never opens the dest for write.
+replace_binary() {
+    _rb_dest="$1"
+    _rb_src="$2"
+    _rb_new="${_rb_dest}.new.$$"
+    if ! cp "$_rb_src" "$_rb_new"; then
+        rm -f "$_rb_new"
+        return 1
+    fi
+    if ! chmod 0755 "$_rb_new"; then
+        rm -f "$_rb_new"
+        return 1
+    fi
+    if ! mv "$_rb_new" "$_rb_dest"; then
+        rm -f "$_rb_new"
+        return 1
+    fi
+    return 0
+}
+
+# systemd: /run/systemd/system (not merely systemctl in PATH — containers lie).
+# openrc before sysv: Alpine has /etc/init.d too.
+init_from_hints() {
+    case "$1" in
+        freebsd) printf '%s\n' freebsd ;;
+        linux)
+            if [ "$2" = y ]; then
+                printf '%s\n' systemd
+            elif [ "$3" = y ]; then
+                printf '%s\n' openrc
+            elif [ "$4" = y ]; then
+                printf '%s\n' sysv
+            else
+                printf '%s\n' none
+            fi
+            ;;
+        *) printf '%s\n' none ;;
+    esac
+}
+
+detect_init() {
+    _di_systemd=n
+    _di_openrc=n
+    _di_initd=n
+    [ -d /run/systemd/system ] && _di_systemd=y
+    if [ -x /sbin/openrc-run ] && check_cmd rc-service; then
+        _di_openrc=y
+    fi
+    [ -d /etc/init.d ] && _di_initd=y
+    _init="$(init_from_hints "${_os:-}" "$_di_systemd" "$_di_openrc" "$_di_initd")"
+}
+
+stop_service() {
+    case "${_init:-}" in
+        systemd) systemctl stop mailiam 2>/dev/null || true ;;
+        sysv)
+            service mailiam stop 2>/dev/null ||
+                /etc/init.d/mailiam stop 2>/dev/null || true
+            ;;
+        openrc) rc-service mailiam stop 2>/dev/null || true ;;
+        freebsd) service mailiam stop 2>/dev/null || true ;;
+    esac
+}
+
+print_service_hints() {
+    case "${_init:-}" in
+        systemd)
+            printf '    Check status:    %ssystemctl status mailiam%s\n' "$CLR_HINT" "$CLR_RESET"
+            printf '    View live logs:  %sjournalctl -u mailiam -f%s\n' "$CLR_HINT" "$CLR_RESET"
+            ;;
+        openrc)
+            printf '    Check status:    %src-service mailiam status%s\n' "$CLR_HINT" "$CLR_RESET"
+            printf '    View live logs:  %stail -f %s/mailiam.log%s\n' "$CLR_HINT" "$_log_dir" "$CLR_RESET"
+            ;;
+        sysv)
+            printf '    Check status:    %sservice mailiam status%s\n' "$CLR_HINT" "$CLR_RESET"
+            printf '    View live logs:  %stail -f %s/mailiam.log%s\n' "$CLR_HINT" "$_log_dir" "$CLR_RESET"
+            ;;
+        freebsd)
+            printf '    Check status:    %sservice mailiam status%s\n' "$CLR_HINT" "$CLR_RESET"
+            printf '    View live logs:  %stail -f %s/mailiam.log%s\n' "$CLR_HINT" "$_log_dir" "$CLR_RESET"
+            ;;
+        *)
+            printf '    Start:            %sset -a; . %s; set +a; %s --config=%s%s\n' \
+                "$CLR_HINT" "${_env_file:-/etc/mailiam/mailiam.env}" \
+                "${_bin_file:-/usr/local/bin/mailiam}" \
+                "${_config_file:-/etc/mailiam/config.json}" "$CLR_RESET"
+            printf '    View live logs:  %stail -f %s/mailiam.log%s\n' "$CLR_HINT" "$_log_dir" "$CLR_RESET"
+            ;;
+    esac
 }
 
 install_binary() {
@@ -509,20 +1210,27 @@ install_binary() {
     _tmp="$(mktemp -d)"
     if [ -n "$_file" ]; then
         _tar="$_file"
+        say "Using local archive ${_tar}..."
     else
-        _tar="${_tmp}/stalwart.tar.gz"
+        _tar="${_tmp}/mailiam.tar.gz"
         _url="$(download_url "$_repo" "$_version" "$_target")" || err "Invalid download source."
-        say "Downloading stalwart for ${_target}..."
+        say "Downloading MailiaM for ${_target}..."
         if ! downloader "$_url" "$_tar" "$_target"; then
             rm -rf "$_tmp"
             err "Download failed."
         fi
+        say "Download complete."
     fi
-    extract_stalwart "$_tar" "$_tmp"
+    say "Extracting archive..."
+    extract_mailiam "$_tar" "$_tmp"
     if [ -e "$_bin_file" ]; then
+        say "Backing up ${_bin_file}..."
         ensure cp "$_bin_file" "${_bin_file}.bak"
+        say "Stopping mailiam..."
+        stop_service
     fi
-    if ! cp "$_extracted" "$_bin_file"; then
+    say "Installing binary to ${_bin_file}..."
+    if ! replace_binary "$_bin_file" "$_extracted"; then
         if [ -f "${_bin_file}.bak" ]; then
             mv "${_bin_file}.bak" "$_bin_file"
         fi
@@ -531,33 +1239,285 @@ install_binary() {
     fi
     ensure chmod 0755 "$_bin_file"
     ensure chown root:root "$_bin_file"
+    ensure_bin_symlink
     rm -rf "$_tmp"
+    say "Binary installed."
 }
 
 recovery_port() {
     _rp_file="${1:-}"
     _rp=
     if [ -n "$_rp_file" ]; then
-        _rp="$(read_env_key "$_rp_file" STALWART_RECOVERY_MODE_PORT)" || _rp=
+        _rp="$(read_env_key_mail "$_rp_file" MAILIAM_RECOVERY_MODE_PORT STALWART_RECOVERY_MODE_PORT)" || _rp=
         if validate_port "$_rp" && [ "$_rp" != 0 ]; then
             printf '%s\n' "$_rp"
             return 0
         fi
-        _rp="$(read_env_key "$_rp_file" STALWART_LISTEN_HTTP)" || _rp=
+        _rp="$(read_env_key_mail "$_rp_file" MAILIAM_LISTEN_HTTP STALWART_LISTEN_HTTP)" || _rp=
         if validate_port "$_rp" && [ "$_rp" != 0 ]; then
             printf '%s\n' "$_rp"
             return 0
         fi
-        printf '%s\n' 8080
+        printf '%s\n' 80
         return 0
     fi
-    printf '%s\n' 8080
+    printf '%s\n' 80
+}
+
+_step_failures=0
+_step_log=
+
+log_step() {
+    [ -n "${_step_log:-}" ] || return 0
+    _ls_ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
+    printf '[%s] %s\n' "$_ls_ts" "$*" >> "$_step_log"
+}
+
+log_uninstall() {
+    _step_log="${_step_log:-/tmp/mailiam-uninstall.log}"
+    log_step "$@"
+}
+
+run_step() {
+    _rs_idx="$1"
+    _rs_tot="$2"
+    _rs_desc="$3"
+    shift 3
+    printf '  %s[%s/%s]%s %-50s' "$CLR_BLUE" "$_rs_idx" "$_rs_tot" "$CLR_RESET" "$_rs_desc"
+    log_step "Step [$_rs_idx/$_rs_tot]: $_rs_desc"
+    _rs_out=$(mktemp)
+    if "$@" > "$_rs_out" 2>&1; then
+        printf ' %s[OK]%s\n' "$CLR_GREEN" "$CLR_RESET"
+        if [ -s "$_rs_out" ]; then
+            while IFS= read -r _l; do
+                log_step "  output: $_l"
+            done < "$_rs_out"
+        fi
+        log_step "Step [$_rs_idx/$_rs_tot]: SUCCESS"
+        rm -f "$_rs_out"
+        return 0
+    else
+        _rs_rc=$?
+        _step_failures=$((_step_failures + 1))
+        printf ' %s[FAILED]%s\n' "$CLR_RED" "$CLR_RESET"
+        if [ -s "$_rs_out" ]; then
+            while IFS= read -r _l; do
+                log_step "  error: $_l"
+            done < "$_rs_out"
+        fi
+        log_step "Step [$_rs_idx/$_rs_tot]: FAILED (exit code $_rs_rc)"
+        rm -f "$_rs_out"
+        return "$_rs_rc"
+    fi
+}
+
+run_uninstall_step() {
+    _step_log="${_step_log:-/tmp/mailiam-uninstall.log}"
+    run_step "$@"
+}
+
+uninstall_stop_service() {
+    stop_service
+    if check_cmd pkill; then
+        pkill -x mailiam 2>/dev/null || true
+    elif check_cmd killall; then
+        killall mailiam 2>/dev/null || true
+    fi
+    rm -f /var/run/mailiam.pid /run/mailiam.pid
+}
+
+uninstall_service_unit() {
+    case "${_init:-none}" in
+        systemd)
+            if check_cmd systemctl; then
+                systemctl disable mailiam.service 2>/dev/null || true
+                systemctl stop mailiam.service 2>/dev/null || true
+            fi
+            rm -f /etc/systemd/system/mailiam.service
+            if check_cmd systemctl; then
+                systemctl daemon-reload 2>/dev/null || true
+            fi
+            ;;
+        sysv)
+            if check_cmd update-rc.d; then
+                update-rc.d -f mailiam remove 2>/dev/null || true
+            elif check_cmd chkconfig; then
+                chkconfig mailiam off 2>/dev/null || true
+            fi
+            rm -f /etc/init.d/mailiam
+            ;;
+        openrc)
+            if check_cmd rc-update; then
+                rc-update del mailiam default 2>/dev/null || true
+            fi
+            rm -f /etc/init.d/mailiam
+            ;;
+        freebsd)
+            if check_cmd sysrc; then
+                sysrc -x mailiam_enable 2>/dev/null || true
+            fi
+            rm -f /usr/local/etc/rc.d/mailiam
+            ;;
+    esac
+}
+
+uninstall_executables() {
+    rm -f "$_bin_file" "${_bin_file}.bak"
+    if [ -n "${_bin_legacy:-}" ] && [ -L "$_bin_legacy" ]; then
+        rm -f "$_bin_legacy"
+    fi
+}
+
+uninstall_account() {
+    [ -n "$_account" ] || return 0
+    if is_system_account "$_account"; then
+        log_step "Skipping removal of protected system account: $_account"
+        return 0
+    fi
+    case "${_os:-linux}" in
+        freebsd)
+            if check_cmd pw; then
+                pw userdel "$_account" 2>/dev/null || true
+            fi
+            ;;
+        *)
+            if check_cmd userdel; then
+                userdel "$_account" 2>/dev/null || true
+            elif check_cmd deluser; then
+                deluser "$_account" 2>/dev/null || true
+            fi
+            ;;
+    esac
+}
+
+uninstall_data() {
+    if [ "${_purge:-0}" -eq 1 ]; then
+        for _dir in "$_conf_dir" "$_data_dir" "$_log_dir"; do
+            case "$_dir" in
+                ""|"/"|"/bin"|"/usr"|"/etc"|"/var"|"/home"|"/root")
+                    log_step "Skipping unsafe purge directory: $_dir"
+                    ;;
+                *)
+                    if [ -d "$_dir" ] || [ -L "$_dir" ]; then
+                        rm -rf "$_dir"
+                        log_step "Purged directory: $_dir"
+                    fi
+                    ;;
+            esac
+        done
+        if [ -n "${_legacy_conf:-}" ] && [ -L "$_legacy_conf" ]; then
+            rm -f "$_legacy_conf"
+            log_step "Purged legacy configuration symlink: $_legacy_conf"
+        fi
+    else
+        log_step "Preserving config ($_conf_dir), data ($_data_dir), and logs ($_log_dir)"
+    fi
+}
+
+uninstall_mailiam() {
+    say ""
+    say_header "Uninstalling MailiaM..."
+    say ""
+    _step_log=/tmp/mailiam-uninstall.log
+    rm -f "$_step_log"
+    : > "$_step_log"
+    chmod 0600 "$_step_log" 2>/dev/null || true
+    log_step "=== MailiaM Uninstallation Started ==="
+    log_step "Init: ${_init:-none}, OS: ${_os:-unknown}, Account: ${_account:-none}"
+    log_step "Paths: bin=$_bin_file, conf=$_conf_dir, data=$_data_dir, log=$_log_dir, purge=${_purge:-0}"
+
+    run_step 1 5 "Stopping MailiaM service..." uninstall_stop_service || true
+    run_step 2 5 "Removing service configuration (${_init})..." uninstall_service_unit || true
+    run_step 3 5 "Removing binary and executables..." uninstall_executables || true
+    run_step 4 5 "Removing service account (${_account})..." uninstall_account || true
+    if [ "${_purge:-0}" -eq 1 ]; then
+        run_step 5 5 "Purging configuration and database directories..." uninstall_data || true
+    else
+        run_step 5 5 "Preserving configuration and data files..." uninstall_data || true
+    fi
+
+    log_step "=== MailiaM Uninstallation Completed ==="
+    print_uninstall_success
+    if [ "${_step_failures:-0}" -gt 0 ]; then
+        return 1
+    fi
+    return 0
+}
+
+step_create_dirs() {
+    ensure mkdir -p "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir"
+    ensure_conf_symlink
+}
+
+step_install_binary() {
+    install_binary "$1"
+}
+
+step_write_env() {
+    ensure_generated_admin
+    write_env_file "$_env_file"
+}
+
+step_set_permissions() {
+    ensure chown "${_account}:${_account}" "$_conf_dir" "$_log_dir" "$_data_dir"
+    ensure chmod 0750 "$_conf_dir" "$_log_dir" "$_data_dir"
+    if [ -e "$_env_file" ]; then
+        ensure chown "root:${_account}" "$_env_file"
+        ensure chmod 0640 "$_env_file"
+    fi
+}
+
+step_install_service() {
+    case "${_init:-none}" in
+        systemd)
+            create_service_linux_systemd "$_bin_file" "$_config_file" "$_env_file" "$_account"
+            ;;
+        sysv)
+            create_service_linux_initd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
+            ;;
+        openrc)
+            create_service_linux_openrc "$_bin_file" "$_config_file" "$_env_file" "$_account"
+            ;;
+        freebsd)
+            create_service_freebsd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+step_update_service_and_permissions() {
+    step_set_permissions
+    step_install_service
+}
+
+step_start_service() {
+    if [ "${_SKIP_START:-0}" -ne 0 ] || [ "${_init:-none}" = none ]; then
+        return 0
+    fi
+    case "${_init}" in
+        systemd) systemctl restart mailiam.service ;;
+        sysv) service mailiam restart 2>/dev/null || /etc/init.d/mailiam restart ;;
+        openrc) rc-service mailiam restart ;;
+        freebsd) service mailiam restart 2>/dev/null || { service mailiam stop 2>/dev/null || true; service mailiam start; } ;;
+    esac
+}
+
+step_reconfig_env() {
+    if [ ! -e "$_env_file" ]; then
+        : > "$_env_file"
+        chmod 0640 "$_env_file"
+    fi
+    upsert_env "$_env_file" MAILIAM_HOSTNAME "$_hostname"
+    upsert_env "$_env_file" MAILIAM_PUBLIC_URL "$_public_url"
+    apply_mode2_admin "$_env_file"
 }
 
 main() {
     local _os _uname _account=""
     local _prefix=""
-    local _yes=0 _update=0 _no_start=0
+    local _yes=0 _update=0 _no_start=0 _uninstall=0 _purge=0
     local _repo="Rezishon/stalwart" _version="latest" _file=""
     _hostname=""
     _public_url=""
@@ -566,19 +1526,23 @@ main() {
     _listen_smtp=25
     _listen_submission=587
     _listen_submissions=465
-    _listen_imap=993
-    _listen_pop3=995
+    _listen_imap=143
+    _listen_pop3=110
     _listen_sieve=4190
     _listen_https=443
-    _listen_http=8080
+    _listen_http=80
     _tls=true
+    _tls_mode="Automatic Let's Encrypt (ACME)"
+    _acme_email=
+    _tls_cert=
+    _tls_key=
     _dc_imap_host=""
     _dc_imap_port=""
-    _dc_imap_security=ssl
+    _dc_imap_security=""
     _dc_smtp_host=""
     _dc_smtp_port=""
-    _dc_smtp_security=ssl
-    _dc_ic=3
+    _dc_smtp_security=""
+    _dc_ic=""
     _admin=
 
     while [ $# -gt 0 ]; do
@@ -592,6 +1556,13 @@ main() {
                 ;;
             -u|--update)
                 _update=1
+                ;;
+            -d|--uninstall)
+                _uninstall=1
+                _install_mode=4
+                ;;
+            --purge)
+                _purge=1
                 ;;
             --no-start)
                 _no_start=1
@@ -771,15 +1742,17 @@ main() {
     if [ -t 0 ] && [ "$_yes" -eq 0 ] && [ "$_update" -eq 0 ]; then
         _interactive=1
     fi
+    init_colors
 
     need_cmd uname
     need_cmd hostname
     _uname="$(uname)"
     case "$_uname" in
-        Linux)   _os="linux"; [ -n "$_account" ] || _account="stalwart" ;;
-        FreeBSD) _os="freebsd"; [ -n "$_account" ] || _account="stalwart" ;;
+        Linux)   _os="linux"; [ -n "$_account" ] || _account="mailiam" ;;
+        FreeBSD) _os="freebsd"; [ -n "$_account" ] || _account="mailiam" ;;
         *)       err "❌ Install failed: Unsupported OS: $_uname" ;;
     esac
+    detect_init
 
     downloader --check
     need_cmd mktemp
@@ -789,129 +1762,116 @@ main() {
     need_cmd rm
     need_cmd tar
     need_cmd cp
+    need_cmd mv
 
     if [ "$(id -u)" -ne 0 ]; then
         err "❌ Install failed: This program needs to run as root."
     fi
 
     [ -n "$_prefix" ] || _prefix=/usr/local
-    [ -n "$_hostname" ] || _hostname="$(hostname -f 2>/dev/null || hostname || printf '%s\n' mail.local)"
+    if [ -z "$_hostname" ]; then
+        _hostname="$(hostname -f 2>/dev/null || hostname || printf '%s\n' mail.localhost)"
+        _hostname="$(hostname_default "$_hostname")"
+    fi
     apply_paths
+    adopt_existing_layout
 
     _target="$(artifact_target "$_uname" "$(uname -m)")" || err "❌ Install failed: Unsupported OS or architecture."
 
     _install_mode=0
-    if [ "$_update" -eq 1 ]; then
+    _existing_bin=$(detect_installed_bin) || _existing_bin=
+    if [ "$_uninstall" -eq 1 ]; then
+        _install_mode=4
+    elif [ "$_update" -eq 1 ]; then
         _install_mode=1
-    elif [ -e "$_bin_file" ]; then
+    elif [ -n "$_existing_bin" ]; then
         if [ "$_yes" -eq 1 ]; then
             _install_mode=1
         else
-            prompt_mode
+            prompt_mode "$_existing_bin"
         fi
+    fi
+
+    if [ "$_install_mode" -eq 4 ]; then
+        if [ "$_interactive" -eq 1 ]; then
+            prompt_uninstall_purge
+            print_uninstall_summary
+            confirm_or_abort "Proceed with uninstallation?" N
+        fi
+        uninstall_mailiam
+        return $?
     fi
 
     if [ "$_interactive" -eq 1 ]; then
         if [ "$_install_mode" -ne 2 ]; then
-            _src_def="${_file:-$_repo}"
-            prompt_value _src_ans "$_src_def" validate_source "Invalid download source." \
-                "Download source [GitHub repo, custom URL, or local file]"
-            apply_source "$_src_ans"
+            prompt_source
             if [ -z "$_file" ]; then
-                prompt_value _version "$_version" validate_version "Invalid version." "Release tag"
+                if [ "$_install_mode" -eq 1 ]; then
+                    _ver_label="Release version to install"
+                else
+                    _ver_label="Release version"
+                fi
+                clear_step
+                prompt_value _version "$_version" validate_version "Invalid version." \
+                    "$_ver_label"
             fi
         fi
 
-        if [ "$_install_mode" -ne 1 ]; then
-            if [ "$_install_mode" -ne 2 ]; then
-                if [ "$_prefix" = /usr/local ]; then
-                    _pfx_label="Installation prefix"
-                    _pfx_def="/usr/local [Standard FHS]"
-                    while :; do
-                        prompt_read "${_pfx_label} (Default: ${_pfx_def}): "
-                        [ -n "$_prompt_ans" ] || _prompt_ans=/usr/local
-                        if validate_prefix "$_prompt_ans"; then
-                            _prefix="$_prompt_ans"
-                            break
-                        fi
-                        printf '%s\n' "Invalid prefix."
-                    done
+        if [ "$_install_mode" -eq 1 ]; then
+            if [ "$_no_start" -eq 0 ]; then
+                clear_step
+                prompt_yes_no _start_ans Y "Restart MailiaM service after update?"
+                if is_yes "$_start_ans"; then
+                    _SKIP_START=0
                 else
-                    prompt_value _prefix "$_prefix" validate_prefix "Invalid prefix." \
-                        "Installation prefix"
+                    _SKIP_START=1
                 fi
-                apply_paths
-                prompt_value _account "$_account" validate_user "Invalid user." "System user account"
-            fi
-            if [ "$_install_mode" -eq 2 ]; then
-                seed_mode2_from_env
-            fi
-            prompt_value _hostname "$_hostname" validate_hostname "Invalid hostname." "Server hostname"
-
-            if [ "$_install_mode" -eq 2 ]; then
-                set_public_url_default
-                prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
-                    "Public base URL"
-                prompt_admin keep
-            else
-                _used_ports=
-                for _spec in \
-                    '_listen_smtp|SMTP port' \
-                    '_listen_submission|Submission port' \
-                    '_listen_submissions|Submissions (SMTPS) port' \
-                    '_listen_imap|IMAP port' \
-                    '_listen_pop3|POP3 port' \
-                    '_listen_sieve|ManageSieve port' \
-                    '_listen_https|HTTPS port' \
-                    '_listen_http|HTTP port'
-                do
-                    _pp_var="${_spec%%|*}"
-                    _pp_label="${_spec#*|}"
-                    eval "_pp_def=\$${_pp_var}"
-                    prompt_port "$_pp_var" "$_pp_def" "$_pp_label"
-                done
-
-                prompt_yes_no _tls_ans Y "Enable TLS on listeners? [Y/n]"
-                if is_yes "$_tls_ans"; then
-                    _tls=true
-                else
-                    _tls=false
-                fi
-
-                set_dc_defaults
-                prompt_value _dc_imap_host "$_dc_imap_host" validate_hostname "Invalid hostname." \
-                    "DeltaChat IMAP host"
-                prompt_port _dc_imap_port "$_dc_imap_port" "DeltaChat IMAP port" nodup
-                prompt_value _dc_imap_security "$_dc_imap_security" validate_dc_security \
-                    "Invalid DeltaChat security." "DeltaChat IMAP security [ssl/starttls/default/plain]"
-                prompt_value _dc_smtp_host "$_dc_smtp_host" validate_hostname "Invalid hostname." \
-                    "DeltaChat SMTP host"
-                prompt_port _dc_smtp_port "$_dc_smtp_port" "DeltaChat SMTP port" nodup
-                prompt_value _dc_smtp_security "$_dc_smtp_security" validate_dc_security \
-                    "Invalid DeltaChat security." "DeltaChat SMTP security [ssl/starttls/default/plain]"
-                prompt_value _dc_ic "$_dc_ic" validate_dc_ic "Invalid DeltaChat ic." \
-                    "DeltaChat certificate checks [0/1/3]"
-
-                set_public_url_default
-                prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
-                    "Public base URL"
-                prompt_admin
-            fi
-        fi
-
-        if [ "$_no_start" -eq 0 ]; then
-            prompt_yes_no _start_ans Y "Enable and start service now? [Y/n]"
-            if is_yes "$_start_ans"; then
-                _SKIP_START=0
             else
                 _SKIP_START=1
             fi
+            print_update_summary
+            confirm_or_abort "Proceed with update?"
+        elif [ "$_install_mode" -eq 2 ]; then
+            seed_mode2_from_env
+            prompt_public_url_step
+            prompt_admin keep
+            if [ "$_no_start" -eq 0 ]; then
+                clear_step
+                prompt_yes_no _start_ans Y "Enable and start MailiaM service now?"
+                if is_yes "$_start_ans"; then
+                    _SKIP_START=0
+                else
+                    _SKIP_START=1
+                fi
+            else
+                _SKIP_START=1
+            fi
+            confirm_or_abort "Proceed with reconfigure?"
         else
-            _SKIP_START=1
+            prompt_paths
+            clear_step
+            prompt_value _account "$_account" validate_user "Invalid user." \
+                "MailiaM user account"
+            prompt_ports
+            prompt_tls
+            prompt_public_url_step
+            prompt_admin
+            if [ "$_no_start" -eq 0 ]; then
+                clear_step
+                prompt_yes_no _start_ans Y "Enable and start MailiaM service now?"
+                if is_yes "$_start_ans"; then
+                    _SKIP_START=0
+                else
+                    _SKIP_START=1
+                fi
+            else
+                _SKIP_START=1
+            fi
+            print_install_summary
+            confirm_or_abort "Proceed with installation?"
         fi
     else
         set_public_url_default
-        set_dc_defaults
         if [ "$_no_start" -eq 1 ]; then
             _SKIP_START=1
         else
@@ -919,93 +1879,53 @@ main() {
         fi
     fi
 
-    create_account "$_os" "$_account"
-    ensure mkdir -p "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir"
-
-    if [ "$_install_mode" -ne 2 ]; then
-        install_binary "$_target"
-    fi
+    _from_ver=
+    _to_ver=
+    _step_failures=0
 
     case "$_install_mode" in
         1)
+            _from_ver="$(installed_version "${_existing_bin:-$_bin_file}")" || _from_ver=
+            run_step 1 4 "Stopping MailiaM service..." stop_service || true
+            run_step 2 4 "Installing updated binary..." step_install_binary "$_target"
+            _to_ver="$(installed_version "$_bin_file")" || _to_ver=
+            [ -n "$_to_ver" ] || _to_ver="$_version"
+            _orig_skip_start="${_SKIP_START:-0}"
+            _SKIP_START=1
+            run_step 3 4 "Updating ${_init} service unit and permissions..." step_update_service_and_permissions
+            _SKIP_START="$_orig_skip_start"
+            run_step 4 4 "Starting MailiaM service..." step_start_service
+            print_update_success
             ;;
         2)
-            if [ ! -e "$_env_file" ]; then
-                : > "$_env_file"
-                chmod 0640 "$_env_file"
-            fi
-            upsert_env "$_env_file" STALWART_HOSTNAME "$_hostname"
-            upsert_env "$_env_file" STALWART_PUBLIC_URL "$_public_url"
-            apply_mode2_admin "$_env_file"
-            ;;
-        *)
-            say "Writing env file at ${_env_file}..."
-            write_env_file "$_env_file"
-            ;;
-    esac
-
-    say "Setting permissions..."
-    ensure chown "${_account}:${_account}" "$_conf_dir" "$_log_dir" "$_data_dir"
-    ensure chmod 0750 "$_conf_dir" "$_log_dir" "$_data_dir"
-    if [ -e "$_env_file" ]; then
-        ensure chown "root:${_account}" "$_env_file"
-        ensure chmod 0640 "$_env_file"
-    fi
-
-    local _service_type=""
-    case "$_os" in
-        linux)
-            if check_cmd systemctl; then
-                create_service_linux_systemd "$_bin_file" "$_config_file" "$_env_file" "$_account"
-                _service_type="systemd"
-            else
-                create_service_linux_initd "$_bin_file" "$_config_file" "$_env_file" "$_account"
-                _service_type="initd"
-            fi
-            ;;
-        freebsd)
-            create_service_freebsd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
-            _service_type="rcd"
-            ;;
-    esac
-
-    say ""
-    say "Installation complete!"
-    say ""
-    case "$_install_mode" in
-        1)
-            say "Binary updated. Existing config, env, and database were left unchanged."
-            ;;
-        2)
+            run_step 1 3 "Updating environment configuration (${_env_file})..." step_reconfig_env
+            run_step 2 3 "Verifying file permissions..." step_set_permissions
+            run_step 3 3 "Restarting MailiaM service..." step_start_service
+            say ""
             say "Environment updated at ${_env_file}."
+            say ""
             ;;
         *)
-            _recovery_port="$(recovery_port "$_env_file")"
-            say "Stalwart is running in bootstrap mode. A temporary administrator"
-            say "password was generated at startup and printed to the service logs."
-            say ""
-            say "To find the password, inspect the service logs:"
-            case "$_service_type" in
-                systemd)
-                    say "     journalctl -u stalwart -n 200 | grep -A8 'bootstrap mode'"
-                    ;;
-                initd)
-                    say "     grep -A8 'bootstrap mode' /var/log/syslog 2>/dev/null \\"
-                    say "       || grep -A8 'bootstrap mode' /var/log/messages"
-                    ;;
-                rcd)
-                    say "     grep -A8 'bootstrap mode' ${_log_dir}/stalwart.log"
-                    ;;
-            esac
-            say ""
-            say "   Or set STALWART_RECOVERY_ADMIN=admin:<password> in"
-            say "   ${_env_file} and restart the service to pin a credential."
-            say ""
-            say "   Finish setup at: http://${_hostname}:${_recovery_port}/admin"
+            run_step 1 6 "Setting up service account (${_account})..." create_account "$_os" "$_account"
+            run_step 2 6 "Creating directories..." step_create_dirs
+            run_step 3 6 "Installing binary..." step_install_binary "$_target"
+            _to_ver="$(installed_version "$_bin_file")" || _to_ver=
+            [ -n "$_to_ver" ] || _to_ver="$_version"
+            run_step 4 6 "Writing environment configuration..." step_write_env
+            run_step 5 6 "Setting permissions..." step_set_permissions
+            run_step 6 6 "Installing ${_init} service unit..." step_install_service
+            if [ "${_init}" != none ] && [ "${_SKIP_START:-0}" -eq 0 ]; then
+                say "Service started."
+            elif [ "${_init}" != none ]; then
+                say "Service left stopped."
+            fi
+            print_install_success
             ;;
     esac
-    say ""
 
+    if [ "${_step_failures:-0}" -gt 0 ]; then
+        return 1
+    fi
     return 0
 }
 
@@ -1013,52 +1933,54 @@ print_usage() {
     cat <<'EOF'
 Usage: install.sh [OPTIONS] [PREFIX]
 
-Install Stalwart into standard FHS paths or under a custom prefix.
+Install MailiaM into standard FHS paths or under a custom prefix.
 
 Options:
   -y, --yes, --non-interactive  Non-interactive install using defaults
   -u, --update                  Update binary only
+  -d, --uninstall               Uninstall MailiaM (stops service, removes binary & service unit)
+  --purge                       When uninstallation is performed, also delete configuration, database, and logs
   --repo <repo|url>             GitHub owner/repo or https base URL
   --version <tag>               Release tag (default: latest)
   --file <path>                 Local .tar.gz archive
   --prefix <path>               Installation prefix
-  --user <name>                 Service account (default: stalwart)
-  --hostname <host>             STALWART_HOSTNAME
-  --public-url <url>            STALWART_PUBLIC_URL
+  --user <name>                 Service account (default: mailiam)
+  --hostname <host>             MAILIAM_HOSTNAME
+  --public-url <url>            MAILIAM_PUBLIC_URL
   --admin <user:pass>           Custom admin; omit for random
-  --smtp-port <n>               STALWART_LISTEN_SMTP (default: 25)
-  --submission-port <n>         STALWART_LISTEN_SUBMISSION (default: 587)
-  --submissions-port <n>        STALWART_LISTEN_SUBMISSIONS (default: 465)
-  --imap-port <n>               STALWART_LISTEN_IMAP (default: 993)
-  --pop3-port <n>               STALWART_LISTEN_POP3 (default: 995)
-  --sieve-port <n>              STALWART_LISTEN_SIEVE (default: 4190)
-  --https-port <n>              STALWART_LISTEN_HTTPS (default: 443)
-  --http-port <n>               STALWART_LISTEN_HTTP (default: 8080)
-  --tls / --no-tls              STALWART_TLS=true / false (default: --tls)
-  --dc-imap-host <host>         STALWART_DC_IMAP_HOST
-  --dc-imap-port <n>            STALWART_DC_IMAP_PORT
-  --dc-imap-security <s>        STALWART_DC_IMAP_SECURITY (default: ssl)
-  --dc-smtp-host <host>         STALWART_DC_SMTP_HOST
-  --dc-smtp-port <n>            STALWART_DC_SMTP_PORT
-  --dc-smtp-security <s>        STALWART_DC_SMTP_SECURITY (default: ssl)
-  --dc-ic <0|1|3>               STALWART_DC_IC (default: 3)
+  --smtp-port <n>               MAILIAM_LISTEN_SMTP (default: 25)
+  --submission-port <n>         MAILIAM_LISTEN_SUBMISSION (default: 587)
+  --submissions-port <n>        MAILIAM_LISTEN_SUBMISSIONS (default: 465)
+  --imap-port <n>               MAILIAM_LISTEN_IMAP (default: 143)
+  --pop3-port <n>               MAILIAM_LISTEN_POP3 (default: 110)
+  --sieve-port <n>              MAILIAM_LISTEN_SIEVE (default: 4190)
+  --https-port <n>              MAILIAM_LISTEN_HTTPS (default: 443)
+  --http-port <n>               MAILIAM_LISTEN_HTTP (default: 80)
+  --tls / --no-tls              MAILIAM_TLS=true / false (default: --tls)
+  --dc-imap-host <host>         MAILIAM_DC_IMAP_HOST
+  --dc-imap-port <n>            MAILIAM_DC_IMAP_PORT
+  --dc-imap-security <s>        MAILIAM_DC_IMAP_SECURITY (default: ssl)
+  --dc-smtp-host <host>         MAILIAM_DC_SMTP_HOST
+  --dc-smtp-port <n>            MAILIAM_DC_SMTP_PORT
+  --dc-smtp-security <s>        MAILIAM_DC_SMTP_SECURITY (default: ssl)
+  --dc-ic <0|1|3>               MAILIAM_DC_IC (default: 3)
   --no-start                    Do not start or restart the service
   -h, --help                    Show this help
 
 PREFIX may also be given as a single positional argument. If both are
 given, the last --prefix wins. Extra positionals are an error.
 
-With no PREFIX, Stalwart is installed under standard FHS paths:
-  binary   /usr/local/bin/stalwart
-  config   /etc/stalwart/config.json      (/usr/local/etc/stalwart/config.json on FreeBSD)
-  env      /etc/stalwart/stalwart.env     (/usr/local/etc/stalwart/stalwart.env on FreeBSD)
-  logs     /var/log/stalwart/
-  data     /var/lib/stalwart/             (/var/db/stalwart on FreeBSD)
+With no PREFIX, MailiaM is installed under standard FHS paths:
+  binary   /usr/local/bin/mailiam          (stalwart symlink for compatibility)
+  config   /etc/mailiam/config.json        (/usr/local/etc/mailiam/config.json on FreeBSD)
+  env      /etc/mailiam/mailiam.env        (/usr/local/etc/mailiam/mailiam.env on FreeBSD)
+  logs     /var/log/mailiam/
+  data     /var/lib/mailiam/               (/var/db/mailiam on FreeBSD)
 
 When PREFIX is provided, a self-contained layout is used instead:
-  binary   $PREFIX/bin/stalwart
+  binary   $PREFIX/bin/mailiam
   config   $PREFIX/etc/config.json
-  env      $PREFIX/etc/stalwart.env
+  env      $PREFIX/etc/mailiam.env
   logs     $PREFIX/logs/
   data     $PREFIX/data/
 EOF
@@ -1094,50 +2016,52 @@ apply_admin_flag() {
 
 write_env_file() {
     {
-        printf '%s\n' '# Environment variables for the Stalwart service.'
+        printf '%s\n' '# Environment variables for the MailiaM service.'
         printf '%s\n' '# Uncomment and edit an entry to override its default.'
         printf '\n'
         printf '%s\n' '# Override the hostname used in HTTP responses'
-        emit_env STALWART_HOSTNAME "$_hostname" || return 1
+        emit_env MAILIAM_HOSTNAME "$_hostname" || return 1
         printf '\n'
         printf '%s\n' '# Override the public base URL published in OAuth, OIDC, and JMAP discovery'
         printf '%s\n' '# documents. Accepts scheme, host, optional port, and optional path prefix.'
-        emit_env STALWART_PUBLIC_URL "$_public_url" || return 1
+        emit_env MAILIAM_PUBLIC_URL "$_public_url" || return 1
         printf '\n'
         printf '%s\n' '# First-boot listeners. Port 0 skips that listener.'
-        emit_env STALWART_LISTEN_SMTP "$_listen_smtp" || return 1
-        emit_env STALWART_LISTEN_SUBMISSION "$_listen_submission" || return 1
-        emit_env STALWART_LISTEN_SUBMISSIONS "$_listen_submissions" || return 1
-        emit_env STALWART_LISTEN_IMAP "$_listen_imap" || return 1
-        emit_env STALWART_LISTEN_POP3 "$_listen_pop3" || return 1
-        emit_env STALWART_LISTEN_SIEVE "$_listen_sieve" || return 1
-        emit_env STALWART_LISTEN_HTTPS "$_listen_https" || return 1
-        emit_env STALWART_LISTEN_HTTP "$_listen_http" || return 1
+        emit_env MAILIAM_LISTEN_SMTP "$_listen_smtp" || return 1
+        emit_env MAILIAM_LISTEN_SUBMISSION "$_listen_submission" || return 1
+        emit_env MAILIAM_LISTEN_SUBMISSIONS "$_listen_submissions" || return 1
+        emit_env MAILIAM_LISTEN_IMAP "$_listen_imap" || return 1
+        emit_env MAILIAM_LISTEN_POP3 "$_listen_pop3" || return 1
+        emit_env MAILIAM_LISTEN_SIEVE "$_listen_sieve" || return 1
+        emit_env MAILIAM_LISTEN_HTTPS "$_listen_https" || return 1
+        emit_env MAILIAM_LISTEN_HTTP "$_listen_http" || return 1
         printf '\n'
         printf '%s\n' '# TLS on inserted listeners (1/true/0/false).'
-        emit_env STALWART_TLS "$_tls" || return 1
-        printf '\n'
-        printf '%s\n' '# DeltaChat advertised endpoints (first insert only).'
-        emit_env STALWART_DC_IMAP_HOST "$_dc_imap_host" || return 1
-        emit_env STALWART_DC_IMAP_PORT "$_dc_imap_port" || return 1
-        emit_env STALWART_DC_IMAP_SECURITY "$_dc_imap_security" || return 1
-        emit_env STALWART_DC_SMTP_HOST "$_dc_smtp_host" || return 1
-        emit_env STALWART_DC_SMTP_PORT "$_dc_smtp_port" || return 1
-        emit_env STALWART_DC_SMTP_SECURITY "$_dc_smtp_security" || return 1
-        emit_env STALWART_DC_IC "$_dc_ic" || return 1
+        emit_env MAILIAM_TLS "$_tls" || return 1
+        if [ -n "$_dc_imap_host" ]; then
+            printf '\n'
+            printf '%s\n' '# DeltaChat advertised endpoints (override).'
+            emit_env MAILIAM_DC_IMAP_HOST "$_dc_imap_host" || return 1
+            [ -n "$_dc_imap_port" ] && { emit_env MAILIAM_DC_IMAP_PORT "$_dc_imap_port" || return 1; }
+            [ -n "$_dc_imap_security" ] && { emit_env MAILIAM_DC_IMAP_SECURITY "$_dc_imap_security" || return 1; }
+            [ -n "$_dc_smtp_host" ] && { emit_env MAILIAM_DC_SMTP_HOST "$_dc_smtp_host" || return 1; }
+            [ -n "$_dc_smtp_port" ] && { emit_env MAILIAM_DC_SMTP_PORT "$_dc_smtp_port" || return 1; }
+            [ -n "$_dc_smtp_security" ] && { emit_env MAILIAM_DC_SMTP_SECURITY "$_dc_smtp_security" || return 1; }
+            [ -n "$_dc_ic" ] && { emit_env MAILIAM_DC_IC "$_dc_ic" || return 1; }
+        fi
         if [ -n "${_admin:-}" ] && [ "$_admin" != random ]; then
             printf '\n'
             printf '%s\n' '# Fixed administrator credentials — format: username:password'
-            emit_env STALWART_RECOVERY_ADMIN "$_admin" || return 1
+            emit_env MAILIAM_RECOVERY_ADMIN "$_admin" || return 1
         fi
         printf '\n'
         printf '%s\n' '# Cluster role assigned to this node. Must match a role name defined in the'
         printf '%s\n' '# cluster registry. Leave unset for a standalone (non-clustered) deployment.'
-        printf '%s\n' '#STALWART_ROLE=primary'
+        printf '%s\n' '#MAILIAM_ROLE=primary'
         printf '\n'
         printf '%s\n' '# Push-notification shard this node is responsible for, when running in a'
         printf '%s\n' '# cluster.'
-        printf '%s\n' '#STALWART_PUSH_SHARD=1'
+        printf '%s\n' '#MAILIAM_PUSH_SHARD=1'
     } > "$1" || return 1
     chmod 0640 "$1"
 }
@@ -1148,9 +2072,9 @@ create_account() {
     if id -u "$_account" > /dev/null 2>&1; then
         return 0
     fi
-    say "🖥️  Creating '${_account}' account..."
+    say "Creating '${_account}' account..."
     if [ "$_os" = "freebsd" ]; then
-        ensure pw useradd -n "$_account" -c "Stalwart service" -d /nonexistent -s /usr/sbin/nologin -w no
+        ensure pw useradd -n "$_account" -c "MailiaM service" -d /nonexistent -s /usr/sbin/nologin -w no
     else
         ensure useradd "$_account" -s /usr/sbin/nologin -M -r -U
     fi
@@ -1158,10 +2082,10 @@ create_account() {
 
 create_service_linux_systemd() {
     local _bin="$1" _config="$2" _env="$3" _user="$4"
-    cat > /etc/systemd/system/stalwart.service <<EOF
+    cat > /etc/systemd/system/mailiam.service <<EOF
 [Unit]
-Description=Stalwart
-Conflicts=postfix.service sendmail.service exim4.service
+Description=MailiaM
+Conflicts=postfix.service sendmail.service exim4.service stalwart.service
 After=network-online.target
 
 [Service]
@@ -1173,7 +2097,7 @@ Restart=on-failure
 RestartSec=5
 EnvironmentFile=-${_env}
 ExecStart=${_bin} --config=${_config}
-SyslogIdentifier=stalwart
+SyslogIdentifier=mailiam
 User=${_user}
 Group=${_user}
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -1182,25 +2106,26 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable stalwart.service
+    systemctl enable mailiam.service
     if [ "${_SKIP_START:-0}" -eq 0 ]; then
-        systemctl restart stalwart.service
+        systemctl restart mailiam.service
     fi
 }
 
 create_service_linux_initd() {
-    local _bin="$1" _config="$2" _env="$3" _user="$4"
-    cat > /etc/init.d/stalwart <<EOF
+    local _bin="$1" _config="$2" _env="$3" _user="$4" _log_dir="${5:-/var/log/mailiam}"
+    mkdir -p /etc/init.d
+    cat > /etc/init.d/mailiam <<EOF
 #!/bin/sh
 ### BEGIN INIT INFO
-# Provides:          stalwart
+# Provides:          mailiam
 # Required-Start:    \$network
 # Required-Stop:     \$network
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: Stalwart Server
-# Description:       Starts and stops the Stalwart Server
-# Conflicts:         postfix sendmail
+# Short-Description: MailiaM Server
+# Description:       Starts and stops the MailiaM Server
+# Conflicts:         postfix sendmail stalwart
 ### END INIT INFO
 
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
@@ -1211,7 +2136,8 @@ PATH=/sbin:/usr/sbin:/bin:/usr/bin
 DAEMON=${_bin}
 DAEMON_ARGS="--config=${_config}"
 ENV_FILE=${_env}
-PIDFILE=/var/run/stalwart.pid
+LOG_FILE="${_log_dir}/mailiam.log"
+PIDFILE=/var/run/mailiam.pid
 ULIMIT_NOFILE=65536
 
 [ -x "\$DAEMON" ] || exit 0
@@ -1222,6 +2148,9 @@ if [ -r "\$ENV_FILE" ]; then
     set +a
 fi
 
+export RUN_AS_USER=${_user}
+export RUN_AS_GROUP=${_user}
+
 ulimit -n \$ULIMIT_NOFILE
 
 do_start()
@@ -1229,14 +2158,14 @@ do_start()
     start-stop-daemon --start --quiet --pidfile \$PIDFILE --exec \$DAEMON --test > /dev/null \\
         || return 1
     start-stop-daemon --start --quiet --pidfile \$PIDFILE --exec \$DAEMON \\
-        --background --make-pidfile --chuid ${_user}:${_user} \\
+        --background --make-pidfile --output "\$LOG_FILE" \\
         -- \$DAEMON_ARGS \\
         || return 2
 }
 
 do_stop()
 {
-    start-stop-daemon --stop --quiet --retry=INT/30/KILL/5 --pidfile \$PIDFILE --name stalwart
+    start-stop-daemon --stop --quiet --retry=INT/30/KILL/5 --pidfile \$PIDFILE --name mailiam
     RETVAL="\$?"
     [ "\$RETVAL" = 2 ] && return 2
     start-stop-daemon --stop --quiet --oknodo --retry=0/30/KILL/5 --exec \$DAEMON
@@ -1247,7 +2176,7 @@ do_stop()
 
 case "\$1" in
   start)
-    [ "\$VERBOSE" != no ] && log_daemon_msg "Starting Stalwart Server" "stalwart"
+    [ "\$VERBOSE" != no ] && log_daemon_msg "Starting MailiaM Server" "mailiam"
     do_start
     case "\$?" in
         0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
@@ -1255,7 +2184,7 @@ case "\$1" in
     esac
     ;;
   stop)
-    [ "\$VERBOSE" != no ] && log_daemon_msg "Stopping Stalwart Server" "stalwart"
+    [ "\$VERBOSE" != no ] && log_daemon_msg "Stopping MailiaM Server" "mailiam"
     do_stop
     case "\$?" in
         0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
@@ -1263,10 +2192,10 @@ case "\$1" in
     esac
     ;;
   status)
-    status_of_proc "\$DAEMON" "stalwart" && exit 0 || exit \$?
+    status_of_proc "\$DAEMON" "mailiam" && exit 0 || exit \$?
     ;;
   restart)
-    log_daemon_msg "Restarting Stalwart Server" "stalwart"
+    log_daemon_msg "Restarting MailiaM Server" "mailiam"
     do_stop
     case "\$?" in
       0|1)
@@ -1282,76 +2211,112 @@ case "\$1" in
     esac
     ;;
   *)
-    echo "Usage: /etc/init.d/stalwart {start|stop|status|restart}" >&2
+    echo "Usage: /etc/init.d/mailiam {start|stop|status|restart}" >&2
     exit 3
     ;;
 esac
 
 exit 0
 EOF
-    chmod +x /etc/init.d/stalwart
-    update-rc.d stalwart defaults
+    chmod +x /etc/init.d/mailiam
+    update-rc.d mailiam defaults
     if [ "${_SKIP_START:-0}" -eq 0 ]; then
-        service stalwart start
+        service mailiam start
+    fi
+}
+
+create_service_linux_openrc() {
+    local _bin="$1" _config="$2" _env="$3" _user="$4"
+    mkdir -p /etc/init.d
+    cat > /etc/init.d/mailiam <<EOF
+#!/sbin/openrc-run
+
+name="MailiaM"
+description="MailiaM Server"
+command="${_bin}"
+command_args="--config=${_config}"
+command_background=yes
+pidfile="/run/mailiam.pid"
+retry="SIGINT/30/SIGKILL/5"
+
+depend() {
+    need net
+}
+
+start_pre() {
+    if [ -r "${_env}" ]; then
+        set -a
+        . "${_env}"
+        set +a
+    fi
+    export RUN_AS_USER=${_user}
+    export RUN_AS_GROUP=${_user}
+    ulimit -n 65536
+}
+EOF
+    chmod +x /etc/init.d/mailiam
+    rc-update add mailiam default
+    if [ "${_SKIP_START:-0}" -eq 0 ]; then
+        rc-service mailiam restart
     fi
 }
 
 create_service_freebsd() {
     local _bin="$1" _config="$2" _env="$3" _user="$4" _log_dir="$5"
     ensure mkdir -p /usr/local/etc/rc.d
-    cat > /usr/local/etc/rc.d/stalwart <<EOF
+    cat > /usr/local/etc/rc.d/mailiam <<EOF
 #!/bin/sh
 
-# PROVIDE: stalwart
+# PROVIDE: mailiam
 # REQUIRE: NETWORKING LOGIN
 # KEYWORD: shutdown
 
 . /etc/rc.subr
 
-name="stalwart"
-rcvar="stalwart_enable"
-desc="Stalwart Server"
+name="mailiam"
+rcvar="mailiam_enable"
+desc="MailiaM Server"
 
 load_rc_config \$name
 
-: \${stalwart_enable:="NO"}
-: \${stalwart_runas_user:="${_user}"}
-: \${stalwart_runas_group:="${_user}"}
-: \${stalwart_config:="${_config}"}
-: \${stalwart_envfile:="${_env}"}
-: \${stalwart_logfile:="${_log_dir}/stalwart.log"}
-: \${stalwart_fdlimit:="65536"}
+: \${mailiam_enable:="NO"}
+: \${mailiam_runas_user:="${_user}"}
+: \${mailiam_runas_group:="${_user}"}
+: \${mailiam_config:="${_config}"}
+: \${mailiam_envfile:="${_env}"}
+: \${mailiam_logfile:="${_log_dir}/mailiam.log"}
+: \${mailiam_fdlimit:="65536"}
 
-pidfile="/var/run/stalwart.pid"
+pidfile="/var/run/mailiam.pid"
 procname="${_bin}"
 command="/usr/sbin/daemon"
-command_args="-f -o \${stalwart_logfile} -p \${pidfile} ${_bin} --config=\${stalwart_config}"
+command_args="-f -o \${mailiam_logfile} -p \${pidfile} ${_bin} --config=\${mailiam_config}"
 sig_stop="INT"
-start_precmd="stalwart_precmd"
+start_precmd="mailiam_precmd"
 
-stalwart_precmd()
+mailiam_precmd()
 {
     # daemon(8) passes its environment through to the service
-    if [ -r "\${stalwart_envfile}" ]; then
+    if [ -r "\${mailiam_envfile}" ]; then
         set -a
-        . "\${stalwart_envfile}"
+        . "\${mailiam_envfile}"
         set +a
     fi
 
-    # Stalwart binds its listeners as root, then setuid()s to this account
-    export RUN_AS_USER="\${stalwart_runas_user}"
-    export RUN_AS_GROUP="\${stalwart_runas_group}"
+    # MailiaM binds its listeners as root, then setuid()s to this account
+    export RUN_AS_USER="\${mailiam_runas_user}"
+    export RUN_AS_GROUP="\${mailiam_runas_group}"
 
-    ulimit -n "\${stalwart_fdlimit}"
+    ulimit -n "\${mailiam_fdlimit}"
 }
 
 run_rc_command "\$1"
 EOF
-    chmod +x /usr/local/etc/rc.d/stalwart
-    sysrc stalwart_enable=YES
+    chmod +x /usr/local/etc/rc.d/mailiam
+    sysrc mailiam_enable=YES
     if [ "${_SKIP_START:-0}" -eq 0 ]; then
-        service stalwart stop > /dev/null 2>&1 || true
-        service stalwart start
+        service mailiam stop > /dev/null 2>&1 || true
+        service mailiam start
     fi
 }
 
@@ -1628,6 +2593,22 @@ get_endianness() {
     fi
 }
 
+print_banner() {
+    printf '%s' "$CLR_RED"
+    cat <<'EOF'
+ ███▄ ▄███▓ ▄▄▄       ██▓ ██▓     ██▓ ▄▄▄       ███▄ ▄███▓
+▓██▒▀█▀ ██▒▒████▄    ▓██▒▓██▒    ▓██▒▒████▄    ▓██▒▀█▀ ██▒
+▓██    ▓██░▒██  ▀█▄  ▒██▒▒██░    ▒██▒▒██  ▀█▄  ▓██    ▓██░
+▒██    ▒██ ░██▄▄▄▄██ ░██░▒██░    ░██░░██▄▄▄▄██ ▒██    ▒██
+▒██▒   ░██▒ ▓█   ▓██▒░██░░██████▒░██░ ▓█   ▓██▒▒██▒   ░██▒
+░ ▒░   ░  ░ ▒▒   ▓▒█░░▓  ░ ▒░▓  ░░▓   ▒▒   ▓▒█░░ ▒░   ░  ░
+░  ░      ░  ▒   ▒▒ ░ ▒ ░░ ░ ▒  ░ ▒ ░  ▒   ▒▒ ░░  ░      ░
+░      ░     ░   ▒    ▒ ░  ░ ░    ▒ ░  ░   ▒   ░      ░
+       ░         ░  ░ ░      ░  ░ ░        ░  ░       ░
+EOF
+    printf '%s\n' "$CLR_RESET"
+}
+
 say() {
     printf '%s\n' "$1"
 }
@@ -1663,7 +2644,7 @@ ensure() {
 downloader() {
     local _dld
     local _ciphersuites
-    local _err
+    local _err=
     local _status
     local _retry
     if check_cmd curl; then
@@ -1681,61 +2662,81 @@ downloader() {
         _retry="$RETVAL"
         get_ciphersuites_for_curl
         _ciphersuites="$RETVAL"
+        if [ -t 2 ]; then
+            _curl_ui='--progress-bar'
+        else
+            _curl_ui='--silent --show-error'
+        fi
         if [ -n "$_ciphersuites" ]; then
-            _err=$(curl $_retry --proto '=https' --tlsv1.2 --ciphers "$_ciphersuites" --silent --show-error --fail --location "$1" --output "$2" 2>&1)
+            downloader_run curl $_retry --proto '=https' --tlsv1.2 --ciphers "$_ciphersuites" $_curl_ui --fail --location "$1" --output "$2"
             _status=$?
         else
             echo "Warning: Not enforcing strong cipher suites for TLS, this is potentially less secure"
             if ! check_help_for "$3" curl --proto --tlsv1.2; then
                 echo "Warning: Not enforcing TLS v1.2, this is potentially less secure"
-                _err=$(curl $_retry --silent --show-error --fail --location "$1" --output "$2" 2>&1)
+                downloader_run curl $_retry $_curl_ui --fail --location "$1" --output "$2"
                 _status=$?
             else
-                _err=$(curl $_retry --proto '=https' --tlsv1.2 --silent --show-error --fail --location "$1" --output "$2" 2>&1)
+                downloader_run curl $_retry --proto '=https' --tlsv1.2 $_curl_ui --fail --location "$1" --output "$2"
                 _status=$?
             fi
         fi
-        if [ -n "$_err" ]; then
-            if echo "$_err" | grep -q 404; then
-                err "❌  Binary for platform '$3' not found, this platform may be unsupported."
-            else
-                echo "$_err" >&2
-            fi
-        fi
+        downloader_fail "$_status" "$3"
         return $_status
     elif [ "$_dld" = wget ]; then
+        if [ -t 2 ]; then
+            _wget_ui=
+        else
+            _wget_ui='-q'
+        fi
         if [ "$(wget -V 2>&1|head -2|tail -1|cut -f1 -d" ")" = "BusyBox" ]; then
             echo "Warning: using the BusyBox version of wget.  Not enforcing strong cipher suites for TLS or TLS v1.2, this is potentially less secure"
-            _err=$(wget "$1" -O "$2" 2>&1)
+            downloader_run wget $_wget_ui "$1" -O "$2"
             _status=$?
         else
             get_ciphersuites_for_wget
             _ciphersuites="$RETVAL"
             if [ -n "$_ciphersuites" ]; then
-                _err=$(wget --https-only --secure-protocol=TLSv1_2 --ciphers "$_ciphersuites" "$1" -O "$2" 2>&1)
+                downloader_run wget $_wget_ui --https-only --secure-protocol=TLSv1_2 --ciphers "$_ciphersuites" "$1" -O "$2"
                 _status=$?
             else
                 echo "Warning: Not enforcing strong cipher suites for TLS, this is potentially less secure"
                 if ! check_help_for "$3" wget --https-only --secure-protocol; then
                     echo "Warning: Not enforcing TLS v1.2, this is potentially less secure"
-                    _err=$(wget "$1" -O "$2" 2>&1)
+                    downloader_run wget $_wget_ui "$1" -O "$2"
                     _status=$?
                 else
-                    _err=$(wget --https-only --secure-protocol=TLSv1_2 "$1" -O "$2" 2>&1)
+                    downloader_run wget $_wget_ui --https-only --secure-protocol=TLSv1_2 "$1" -O "$2"
                     _status=$?
                 fi
             fi
         fi
-        if [ -n "$_err" ]; then
-            if echo "$_err" | grep -q ' 404 Not Found'; then
-                err "❌  Binary for platform '$3' not found, this platform may be unsupported."
-            else
-                echo "$_err" >&2
-            fi
-        fi
+        downloader_fail "$_status" "$3"
         return $_status
     else
         err "Unknown downloader"   # should not reach here
+    fi
+}
+
+# TTY: native curl/wget bar on stderr. Piped: capture for 404.
+downloader_run() {
+    if [ -t 2 ]; then
+        "$@"
+    else
+        _err=$("$@" 2>&1)
+        return $?
+    fi
+}
+
+downloader_fail() {
+    _df_status="$1"
+    _df_plat="$2"
+    [ "$_df_status" -eq 0 ] && return 0
+    if [ -n "${_err:-}" ]; then
+        if echo "$_err" | grep -Eq '404|Not Found'; then
+            err "❌  Binary for platform '$_df_plat' not found, this platform may be unsupported."
+        fi
+        echo "$_err" >&2
     fi
 }
 

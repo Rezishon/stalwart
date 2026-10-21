@@ -8,7 +8,10 @@ use super::{backup::BackupParams, console::store_console};
 use crate::{
     BuildServer, Caches, Core, Data, IPC_CHANNEL_BUFFER, Inner, Ipc,
     config::{
-        network::AsnGeoLookupConfig, server::Listeners, storage::Storage, telemetry::Telemetry,
+        network::AsnGeoLookupConfig,
+        server::{Listeners, listener::recovery_http_port},
+        storage::Storage,
+        telemetry::Telemetry,
     },
     ipc::{BroadcastEvent, PushEvent, QueueEvent, ReportingEvent, TrainTaskController},
     manager::defaults::BootstrapDefaults,
@@ -38,11 +41,11 @@ pub struct IpcReceivers {
 }
 
 const HELP: &str = concat!(
-    "Stalwart Server v",
-    env!("STALWART_VERSION"),
+    "MailiaM Server v",
+    env!("MAILIAM_VERSION"),
     r#"
 
-Usage: stalwart [OPTIONS]
+Usage: mailiam [OPTIONS]
 
 Options:
   -c, --config <PATH>              Start server with the specified configuration file
@@ -87,7 +90,7 @@ impl BootManager {
                         std::process::exit(0);
                     }
                     ("version" | "V", _) => {
-                        println!("{}", env!("STALWART_VERSION"));
+                        println!("{}", env!("MAILIAM_VERSION"));
                         std::process::exit(0);
                     }
                     ("config" | "c", Some(value)) => {
@@ -166,30 +169,28 @@ impl BootManager {
                 telemetry.enable(false);
 
                 if bootstrap.registry.is_bootstrap_mode() {
+                    let port = recovery_http_port();
                     trc::event!(
                         Server(trc::ServerEvent::BootstrapMode),
                         Hostname = bootstrap.registry.local_hostname().to_string(),
                         Details = format!(
-                            "No configuration file was found. Port {} is open for initial setup.",
-                            crate::manager::defaults::recovery_http_port()
+                            "No configuration file was found. Port {port} is open for initial setup."
                         ),
-                        Version = env!("STALWART_VERSION"),
+                        Version = env!("MAILIAM_VERSION"),
                     );
                 } else if bootstrap.registry.is_recovery_mode() {
+                    let port = recovery_http_port();
                     trc::event!(
                         Server(trc::ServerEvent::RecoveryMode),
-                        Details = format!(
-                            "Port {} is open for troubleshooting and recovery.",
-                            crate::manager::defaults::recovery_http_port()
-                        ),
+                        Details = format!("Port {port} is open for troubleshooting and recovery."),
                         Hostname = bootstrap.registry.local_hostname().to_string(),
-                        Version = env!("STALWART_VERSION"),
+                        Version = env!("MAILIAM_VERSION"),
                     );
                 } else {
                     trc::event!(
                         Server(trc::ServerEvent::Startup),
                         Hostname = bootstrap.registry.local_hostname().to_string(),
-                        Version = env!("STALWART_VERSION"),
+                        Version = env!("MAILIAM_VERSION"),
                     );
                 }
 
