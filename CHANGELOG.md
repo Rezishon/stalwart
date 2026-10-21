@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.25-rl1.0.19] - 2026-10-17
+
+RiseLabs fork. `--version` prints `0.16.25-rl1.0.19`. Cargo package version stays `0.16.25`.
+
+### Added
+- Interactive installer: TTY prompts, update modes, env-driven HTTP/TLS/DeltaChat listen ports.
+- DeltaChat account prefixes (instant vs custom) and username blacklist, advertised on `/api/v1/config`.
+- DeltaChat IMAP/SMTP endpoints in admin (empty host = primary domain). `dclogin` advertises endpoints, `ic`, TLS tokens, and hash algorithm.
+- Web Application `urlPrefix` `/` overlays the baked relay. `/admin` and `/account` stay on the compile-time WebUI.
+
+### Changed
+- Instant and custom account prefixes are independent.
+- MailiaM GHCR image; release archives renamed `mailiam-*`.
+- Client secrets stored as PHC hashes; password hashes must match the server algorithm.
+
 ## [0.16.25-rl1] - 2026-10-14
 
 RiseLabs fork. `--version` prints `0.16.25-rl1`. Cargo package version stays `0.16.25`.

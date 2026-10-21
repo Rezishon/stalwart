@@ -1353,6 +1353,18 @@ impl EnumImpl for Property {
             b"altchaRequired" => Property::AltchaRequired,
             b"altchaMaxNumber" => Property::AltchaMaxNumber,
             b"altchaHmacSecret" => Property::AltchaHmacSecret,
+            b"imapHost" => Property::ImapHost,
+            b"imapPort" => Property::ImapPort,
+            b"imapSecurity" => Property::ImapSecurity,
+            b"smtpHost" => Property::SmtpHost,
+            b"smtpPort" => Property::SmtpPort,
+            b"smtpSecurity" => Property::SmtpSecurity,
+            b"certificateChecks" => Property::CertificateChecks,
+            b"instantPrefixEnabled" => Property::InstantPrefixEnabled,
+            b"instantPrefix" => Property::InstantPrefix,
+            b"customPrefixEnabled" => Property::CustomPrefixEnabled,
+            b"customPrefix" => Property::CustomPrefix,
+            b"usernameBlacklist" => Property::UsernameBlacklist,
         }
     }
 
@@ -2301,6 +2313,18 @@ impl EnumImpl for Property {
             Property::AltchaRequired => "altchaRequired",
             Property::AltchaMaxNumber => "altchaMaxNumber",
             Property::AltchaHmacSecret => "altchaHmacSecret",
+            Property::ImapHost => "imapHost",
+            Property::ImapPort => "imapPort",
+            Property::ImapSecurity => "imapSecurity",
+            Property::SmtpHost => "smtpHost",
+            Property::SmtpPort => "smtpPort",
+            Property::SmtpSecurity => "smtpSecurity",
+            Property::CertificateChecks => "certificateChecks",
+            Property::InstantPrefixEnabled => "instantPrefixEnabled",
+            Property::InstantPrefix => "instantPrefix",
+            Property::CustomPrefixEnabled => "customPrefixEnabled",
+            Property::CustomPrefix => "customPrefix",
+            Property::UsernameBlacklist => "usernameBlacklist",
         }
     }
 
@@ -3253,11 +3277,23 @@ impl EnumImpl for Property {
             946 => Some(Property::AltchaRequired),
             947 => Some(Property::AltchaMaxNumber),
             948 => Some(Property::AltchaHmacSecret),
+            949 => Some(Property::ImapHost),
+            950 => Some(Property::ImapPort),
+            951 => Some(Property::ImapSecurity),
+            952 => Some(Property::SmtpHost),
+            953 => Some(Property::SmtpPort),
+            954 => Some(Property::SmtpSecurity),
+            955 => Some(Property::CertificateChecks),
+            956 => Some(Property::InstantPrefixEnabled),
+            957 => Some(Property::InstantPrefix),
+            958 => Some(Property::CustomPrefixEnabled),
+            959 => Some(Property::CustomPrefix),
+            960 => Some(Property::UsernameBlacklist),
             _ => None,
         }
     }
 
-    const COUNT: usize = 949;
+    const COUNT: usize = 961;
 }
 
 impl serde::Serialize for Property {

@@ -24,7 +24,7 @@ use directory::core::secret::{hash_secret, verify_secret_hash};
 use http_proto::{request::fetch_body, *};
 use hyper::StatusCode;
 use registry::schema::{
-    enums::{PasswordHashAlgorithm, Permission},
+    enums::Permission,
     prelude::{ObjectType, Property, UTCDateTime},
     structs::OAuthClient,
 };
@@ -158,7 +158,7 @@ impl ClientRegistrationHandler for Server {
             .map(char::from)
             .collect::<String>();
         let secret_hash = hash_secret(
-            PasswordHashAlgorithm::Argon2id,
+            self.core.network.security.password_hash_algorithm,
             client_secret.clone().into_bytes(),
         )
         .await

@@ -5,62 +5,46 @@
  */
 
 use crate::altcha::AltchaEngine;
-use crate::config::DeltaChatSettings;
-use crate::dclogin::build_dclogin_uri;
+use crate::config::{endpoints_from_settings, fill_empty_endpoint_hosts, DeltaChatSettings};
 use crate::error::DeltaChatError;
 use crate::models::{
     CustomAccountRequest, CustomAccountResponse, InstantAccountRequest, InstantAccountResponse,
 };
+use crate::password_hash::password_hash_matches;
 use common::Server;
-use directory::core::secret::hash_secret;
-use registry::schema::{
-    enums::PasswordHashAlgorithm,
-    structs::{Account, Credential, PasswordCredential, UserAccount, UserRoles},
-};
+use registry::schema::structs::{Account, Credential, PasswordCredential, UserAccount, UserRoles};
 use registry::types::list::List;
 use std::sync::Arc;
-use store::rand::{RngExt, distr::Alphanumeric, rng};
 use store::registry::write::{RegistryWrite, RegistryWriteResult};
 use types::id::Id;
 
-const RESERVED_NAMES: &[&str] = &[
-    "admin",
-    "administrator",
-    "root",
-    "postmaster",
-    "hostmaster",
-    "webmaster",
-    "abuse",
-    "mailer-daemon",
-    "nobody",
-    "support",
-    "security",
-    "noc",
-    "dmarc",
-    "dkim",
-    "sales",
-    "info",
-    "daemon",
-    "help",
-];
+pub fn matches_blacklist(username: &str, blacklist: &[String]) -> bool {
+    let u = username.to_ascii_lowercase();
+    blacklist.iter().any(|pattern| {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return false;
+        }
+        if let Some(inner) = pattern.strip_prefix('*').and_then(|p| p.strip_suffix('*')) {
+            !inner.is_empty() && u.contains(inner)
+        } else if let Some(prefix) = pattern.strip_suffix('*') {
+            !prefix.is_empty() && u.starts_with(prefix)
+        } else if let Some(suffix) = pattern.strip_prefix('*') {
+            !suffix.is_empty() && u.ends_with(suffix)
+        } else {
+            u == pattern
+        }
+    })
+}
 
-pub fn validate_username(username: &str) -> Result<(), DeltaChatError> {
+pub fn validate_username(
+    username: &str,
+    settings: &DeltaChatSettings,
+) -> Result<(), DeltaChatError> {
     let u = username.trim().to_ascii_lowercase();
     if u.len() < 3 || u.len() > 32 {
         return Err(DeltaChatError::InvalidUsername(
             "Username must be between 3 and 32 characters".to_string(),
-        ));
-    }
-
-    if u.starts_with("dc_") {
-        return Err(DeltaChatError::InvalidUsername(
-            "Username prefix 'dc_' is reserved for instant accounts".to_string(),
-        ));
-    }
-
-    if RESERVED_NAMES.contains(&u.as_str()) {
-        return Err(DeltaChatError::InvalidUsername(
-            "Username is reserved".to_string(),
         ));
     }
 
@@ -79,26 +63,114 @@ pub fn validate_username(username: &str) -> Result<(), DeltaChatError> {
         ));
     }
 
+    if settings.instant_accounts_enabled {
+        let instant_prefix = settings.instant_prefix.to_ascii_lowercase();
+        if settings.instant_prefix_enabled && !instant_prefix.is_empty() {
+            if u.starts_with(&instant_prefix) {
+                return Err(DeltaChatError::InvalidUsername(format!(
+                    "Username prefix '{}' is reserved for instant accounts",
+                    settings.instant_prefix
+                )));
+            }
+        } else if (12..=16).contains(&u.len())
+            && u.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return Err(DeltaChatError::InvalidUsername(
+                "Hexadecimal usernames are reserved for instant accounts".to_string(),
+            ));
+        }
+    }
+
+    if settings.custom_prefix_enabled && !settings.custom_prefix.is_empty() {
+        let custom_prefix = settings.custom_prefix.to_ascii_lowercase();
+        if !u.starts_with(&custom_prefix) {
+            return Err(DeltaChatError::InvalidUsername(format!(
+                "Username must start with prefix '{}'",
+                settings.custom_prefix
+            )));
+        }
+    }
+
+    if matches_blacklist(&u, &settings.username_blacklist) {
+        return Err(DeltaChatError::InvalidUsername(
+            "Username is reserved or restricted".to_string(),
+        ));
+    }
+
     Ok(())
 }
 
-pub fn validate_password(password: &str) -> Result<(), DeltaChatError> {
-    if password.len() < 8 {
-        return Err(DeltaChatError::InvalidPassword(
-            "Password must be at least 8 characters".to_string(),
+pub fn validate_instant_username(
+    username: &str,
+    settings: &DeltaChatSettings,
+) -> Result<(), DeltaChatError> {
+    let u = username.trim().to_ascii_lowercase();
+    if u.len() < 3 || u.len() > 32 {
+        return Err(DeltaChatError::InvalidUsername(
+            "Username must be between 3 and 32 characters".to_string(),
         ));
+    }
+
+    if matches_blacklist(&u, &settings.username_blacklist) {
+        return Err(DeltaChatError::InvalidUsername(
+            "Username is reserved or restricted".to_string(),
+        ));
+    }
+
+    if settings.instant_prefix_enabled {
+        let prefix = settings.instant_prefix.to_ascii_lowercase();
+        let ok = u.strip_prefix(&prefix).is_some_and(|suffix| {
+            suffix.len() == 12 && suffix.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        });
+        if !ok {
+            return Err(DeltaChatError::InvalidUsername(format!(
+                "Instant username must match {prefix} + 12 hex chars"
+            )));
+        }
+    } else {
+        let ok = (12..=16).contains(&u.len())
+            && u.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if !ok {
+            return Err(DeltaChatError::InvalidUsername(
+                "Instant username must be 12 to 16 hex chars".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn reject_plaintext_and_check_hash(
+    server: &Server,
+    password: &Option<String>,
+    password_hash: &str,
+) -> Result<(), DeltaChatError> {
+    if password.is_some() {
+        return Err(DeltaChatError::InvalidPassword(
+            "Plaintext password is not accepted".into(),
+        ));
+    }
+    if !password_hash_matches(
+        server.core.network.security.password_hash_algorithm,
+        password_hash,
+    ) {
+        return Err(DeltaChatError::InvalidPasswordHash);
     }
     Ok(())
 }
 
-pub fn generate_instant_credentials(domain: &str) -> (String, String) {
-    let mut rng = rng();
-    let hex_part: u64 = rng.random_range(0..0x1_000_000_000_000u64);
-    let email = format!("dc_{hex_part:012x}@{domain}");
-    let password: String = (0..24)
-        .map(|_| rng.sample(Alphanumeric) as char)
-        .collect();
-    (email, password)
+fn require_advertised_hosts(
+    settings: &DeltaChatSettings,
+    primary: &str,
+    domain: &str,
+) -> Result<(), DeltaChatError> {
+    let mut endpoints = endpoints_from_settings(settings)?;
+    fill_empty_endpoint_hosts(&mut endpoints, domain);
+    fill_empty_endpoint_hosts(&mut endpoints, primary);
+    if endpoints.imap.host.trim().is_empty() || endpoints.smtp.host.trim().is_empty() {
+        return Err(DeltaChatError::EndpointsNotConfigured);
+    }
+    Ok(())
 }
 
 async fn resolve_signup_domain(
@@ -133,7 +205,8 @@ pub async fn handle_instant_account(
         return Err(DeltaChatError::InstantAccountsDisabled);
     }
 
-    // Verify Altcha if required
+    validate_instant_username(&req.username, settings)?;
+
     if settings.altcha_required {
         let payload = req
             .altcha_payload
@@ -142,30 +215,32 @@ pub async fn handle_instant_account(
         altcha_engine.verify_raw(payload)?;
     }
 
+    reject_plaintext_and_check_hash(server, &req.password, &req.password_hash)?;
+
     let domain = resolve_signup_domain(settings, server).await?;
     let domain_name = domain
         .names
         .first()
         .ok_or_else(|| DeltaChatError::InvalidDomain("Domain has no name".into()))?;
-    let (email, password) = generate_instant_credentials(domain_name);
-    let (local_part, _) = email
-        .split_once('@')
-        .ok_or_else(|| DeltaChatError::Internal("Invalid generated email".to_string()))?;
+    require_advertised_hosts(settings, &server.core.email.default_domain_name, domain_name)?;
+    let username = req.username.trim().to_ascii_lowercase();
 
-    let hashed_secret = hash_secret(
-        PasswordHashAlgorithm::Argon2id,
-        password.as_bytes().to_vec(),
-    )
-    .await
-    .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
+    if server
+        .account_id_from_parts(&username, domain.id)
+        .await
+        .map_err(|e| DeltaChatError::Internal(e.to_string()))?
+        .is_some()
+    {
+        return Err(DeltaChatError::AccountAlreadyExists);
+    }
 
     let account = Account::User(UserAccount {
-        name: local_part.to_string(),
+        name: username.clone(),
         domain_id: Id::from(domain.id),
         roles: UserRoles::User,
         credentials: List::from_iter([Credential::Password(PasswordCredential {
             credential_id: 0u64.into(),
-            secret: hashed_secret,
+            secret: req.password_hash.clone(),
             ..Default::default()
         })]),
         description: "DeltaChat Instant Account".to_string().into(),
@@ -186,17 +261,9 @@ pub async fn handle_instant_account(
         other => return Err(DeltaChatError::Internal(other.to_string())),
     };
 
-    let dclogin_link = build_dclogin_uri(
-        &email,
-        &password,
-        &DeltaChatSettings::advertised_endpoints(server),
-    );
-
     Ok(InstantAccountResponse {
         account_id,
-        email,
-        password,
-        dclogin_link,
+        email: format!("{username}@{domain_name}"),
         account_type: "instant".to_string(),
         expires_at: None,
     })
@@ -218,10 +285,8 @@ pub async fn handle_custom_account(
         return Err(DeltaChatError::CustomAccountsDisabled);
     }
 
-    validate_username(&req.username)?;
-    validate_password(&req.password)?;
+    validate_username(&req.username, settings)?;
 
-    // Verify Altcha if required
     if settings.altcha_required {
         let payload = req
             .altcha_payload
@@ -230,15 +295,17 @@ pub async fn handle_custom_account(
         altcha_engine.verify_raw(payload)?;
     }
 
+    reject_plaintext_and_check_hash(server, &req.password, &req.password_hash)?;
+
     let domain = resolve_signup_domain(settings, server).await?;
     let domain_name = domain
         .names
         .first()
         .ok_or_else(|| DeltaChatError::InvalidDomain("Domain has no name".into()))?;
+    require_advertised_hosts(settings, &server.core.email.default_domain_name, domain_name)?;
 
     let username = req.username.trim().to_ascii_lowercase();
 
-    // Check conflict
     if server
         .account_id_from_parts(&username, domain.id)
         .await
@@ -248,20 +315,13 @@ pub async fn handle_custom_account(
         return Err(DeltaChatError::AccountAlreadyExists);
     }
 
-    let hashed_secret = hash_secret(
-        PasswordHashAlgorithm::Argon2id,
-        req.password.as_bytes().to_vec(),
-    )
-    .await
-    .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
-
     let account = Account::User(UserAccount {
         name: username.clone(),
         domain_id: Id::from(domain.id),
         roles: UserRoles::User,
         credentials: List::from_iter([Credential::Password(PasswordCredential {
             credential_id: 0u64.into(),
-            secret: hashed_secret,
+            secret: req.password_hash.clone(),
             ..Default::default()
         })]),
         description: "DeltaChat Custom Account".to_string().into(),
@@ -282,17 +342,9 @@ pub async fn handle_custom_account(
         other => return Err(DeltaChatError::Internal(other.to_string())),
     };
 
-    let email = format!("{username}@{domain_name}");
-    let dclogin_link = build_dclogin_uri(
-        &email,
-        &req.password,
-        &DeltaChatSettings::advertised_endpoints(server),
-    );
-
     Ok(CustomAccountResponse {
         account_id,
-        email,
-        dclogin_link,
+        email: format!("{username}@{domain_name}"),
         account_type: "custom".to_string(),
     })
 }
@@ -303,31 +355,151 @@ mod tests {
 
     #[test]
     fn test_username_validation() {
-        assert!(validate_username("alice").is_ok());
-        assert!(validate_username("bob_123").is_ok());
-        assert!(validate_username("carol.smith").is_ok());
+        let settings = DeltaChatSettings::default();
+        assert!(validate_username("alice", &settings).is_ok());
+        assert!(validate_username("bob_123", &settings).is_ok());
+        assert!(validate_username("carol.smith", &settings).is_ok());
 
-        assert!(validate_username("al").is_err()); // Too short
-        assert!(validate_username("a".repeat(33).as_str()).is_err()); // Too long
-        assert!(validate_username("admin").is_err()); // Reserved
-        assert!(validate_username("root").is_err()); // Reserved
-        assert!(validate_username(".leading").is_err()); // Leading dot
-        assert!(validate_username("trailing.").is_err()); // Trailing dot
-        assert!(validate_username("consecutive..dots").is_err()); // Consecutive dots
-        assert!(validate_username("invalid@char").is_err()); // Invalid character
+        assert!(validate_username("al", &settings).is_err()); // Too short
+        assert!(validate_username("a".repeat(33).as_str(), &settings).is_err()); // Too long
+        assert!(validate_username("admin", &settings).is_err()); // Reserved
+        assert!(validate_username("root", &settings).is_err()); // Reserved
+        assert!(validate_username(".leading", &settings).is_err()); // Leading dot
+        assert!(validate_username("trailing.", &settings).is_err()); // Trailing dot
+        assert!(validate_username("consecutive..dots", &settings).is_err()); // Consecutive dots
+        assert!(validate_username("invalid@char", &settings).is_err()); // Invalid character
     }
 
     #[test]
-    fn test_password_validation() {
-        assert!(validate_password("12345678").is_ok());
-        assert!(validate_password("short").is_err());
+    fn test_instant_username_with_configurable_prefix() {
+        let mut settings = DeltaChatSettings {
+            instant_prefix_enabled: true,
+            instant_prefix: "dc_".into(),
+            ..Default::default()
+        };
+        assert!(validate_instant_username("dc_0123456789ab", &settings).is_ok());
+        assert!(validate_instant_username("xx_0123456789ab", &settings).is_err());
+        assert!(validate_instant_username("dc_short", &settings).is_err());
+
+        // Custom prefix
+        settings.instant_prefix = "bot_".into();
+        assert!(validate_instant_username("bot_0123456789ab", &settings).is_ok());
+        assert!(validate_instant_username("dc_0123456789ab", &settings).is_err());
+
+        // Disabled prefix (12-16 hex chars)
+        settings.instant_prefix_enabled = false;
+        assert!(validate_instant_username("0123456789ab", &settings).is_ok());
+        assert!(validate_instant_username("0123456789abcdef", &settings).is_ok());
+        assert!(validate_instant_username("0123456789", &settings).is_err()); // Too short
+        assert!(validate_instant_username("not_hex_chars!", &settings).is_err());
+
+        // Instant accounts cannot use blacklisted names
+        settings.username_blacklist = vec!["bot_0123456789ab".into()];
+        assert!(validate_instant_username("bot_0123456789ab", &settings).is_err());
     }
 
     #[test]
-    fn test_generate_instant_credentials() {
-        let (email, password) = generate_instant_credentials("example.org");
-        assert!(email.starts_with("dc_"));
-        assert!(email.ends_with("@example.org"));
-        assert_eq!(password.len(), 24);
+    fn test_custom_username_prefix_and_blacklist() {
+        let mut settings = DeltaChatSettings {
+            instant_prefix_enabled: true,
+            instant_prefix: "dc_".into(),
+            username_blacklist: vec![
+                "admin".into(),
+                "*support*".into(),
+                "vip_*".into(),
+                "*-bot".into(),
+                "*".into(), // degenerate wildcard: should be ignored safely
+                "".into(),  // empty: should be ignored safely
+            ],
+            ..Default::default()
+        };
+
+        // Disallow instant prefix
+        assert!(validate_username("dc_alex", &settings).is_err());
+
+        // Blacklist exact and wildcards
+        assert!(validate_username("admin", &settings).is_err());
+        assert!(validate_username("tech-support-team", &settings).is_err());
+        assert!(validate_username("vip_user", &settings).is_err());
+        assert!(validate_username("helper-bot", &settings).is_err());
+
+        // Normal names allowed despite degenerate wildcards in list
+        assert!(validate_username("rezishon0", &settings).is_ok());
+        assert!(validate_username("alice", &settings).is_ok());
+
+        // Instant namespace collision guard when instant prefix disabled
+        settings.instant_prefix_enabled = false;
+        assert!(validate_username("0123456789ab", &settings).is_err()); // Hex reserved for instant
+        assert!(validate_username("alice_normal", &settings).is_ok());
+
+        // Custom prefix enforced
+        settings.custom_prefix_enabled = true;
+        settings.custom_prefix = "usr_".into();
+        assert!(validate_username("usr_alice", &settings).is_ok());
+        assert!(validate_username("alice", &settings).is_err());
+    }
+
+    #[test]
+    fn instant_username_must_be_dc_hex12() {
+        let settings = DeltaChatSettings::default();
+        assert!(validate_instant_username("dc_0123456789ab", &settings).is_ok());
+        assert!(validate_instant_username("alice", &settings).is_err());
+        assert!(validate_instant_username("dc_ZZ", &settings).is_err());
+    }
+
+    #[test]
+    fn plaintext_password_field_is_rejected_by_model() {
+        let json = r#"{"username":"dc_0123456789ab","password":"secret","password_hash":"$argon2id$x"}"#;
+        let req: InstantAccountRequest = serde_json::from_str(json).unwrap();
+        assert!(req.password.is_some());
+    }
+
+    #[test]
+    fn custom_still_rejects_dc_prefix() {
+        let settings = DeltaChatSettings::default();
+        assert!(validate_username("dc_alice", &settings).is_err());
+    }
+
+    #[test]
+    fn test_matches_blacklist() {
+        let blacklist = vec![
+            "admin".to_string(),
+            "*support*".to_string(),
+            "vip_*".to_string(),
+            "*-bot".to_string(),
+            "*".to_string(),
+            "**".to_string(),
+            "".to_string(),
+            "   ".to_string(),
+            "  padded  ".to_string(),
+        ];
+        assert!(matches_blacklist("admin", &blacklist));
+        assert!(matches_blacklist("ADMIN", &blacklist));
+        assert!(matches_blacklist("tech-support-team", &blacklist));
+        assert!(matches_blacklist("vip_123", &blacklist));
+        assert!(matches_blacklist("test-bot", &blacklist));
+        assert!(matches_blacklist("padded", &blacklist));
+        assert!(!matches_blacklist("alice", &blacklist));
+        assert!(!matches_blacklist("normal_user", &blacklist));
+    }
+
+    #[test]
+    fn empty_hosts_ok_when_primary_domain_present() {
+        let settings = DeltaChatSettings::default();
+        assert!(require_advertised_hosts(&settings, "example.org", "").is_ok());
+        assert!(require_advertised_hosts(&settings, "", "example.org").is_ok());
+    }
+
+    #[test]
+    fn empty_hosts_fail_without_domain() {
+        let settings = DeltaChatSettings::default();
+        assert_eq!(
+            require_advertised_hosts(&settings, "", ""),
+            Err(DeltaChatError::EndpointsNotConfigured)
+        );
+        assert_eq!(
+            require_advertised_hosts(&settings, "localhost", ""),
+            Err(DeltaChatError::EndpointsNotConfigured)
+        );
     }
 }

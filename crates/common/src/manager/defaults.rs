@@ -616,7 +616,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                     .await?;
             }
         } else {
-            let mut dc = DeltaChat::default();
+            let mut dc = delta_chat_from_env();
             if let Some(domain_id) = sys_domain {
                 dc.domain_id = domain_id;
             }
@@ -689,6 +689,57 @@ fn should_repair_http_listener(
     }
 }
 
+pub(crate) fn delta_chat_from_get(get: impl Fn(&str) -> Option<String>) -> DeltaChat {
+    let mut dc = DeltaChat::default();
+    dc.imap_host = env_str_from(get("MAILIAM_DC_IMAP_HOST").as_deref(), "");
+    dc.imap_port = u64::from(env_u16_from(
+        get("MAILIAM_DC_IMAP_PORT").as_deref(),
+        env_u16_from(get("MAILIAM_LISTEN_IMAP").as_deref(), 993),
+    ));
+    dc.imap_security = match get("MAILIAM_DC_IMAP_SECURITY").as_deref().map(str::trim) {
+        Some(s @ ("ssl" | "starttls" | "default" | "plain")) => s.to_string(),
+        _ => "ssl".into(),
+    };
+    dc.smtp_host = env_str_from(get("MAILIAM_DC_SMTP_HOST").as_deref(), "");
+    dc.smtp_port = u64::from(env_u16_from(
+        get("MAILIAM_DC_SMTP_PORT").as_deref(),
+        env_u16_from(get("MAILIAM_LISTEN_SUBMISSIONS").as_deref(), 465),
+    ));
+    dc.smtp_security = match get("MAILIAM_DC_SMTP_SECURITY").as_deref().map(str::trim) {
+        Some(s @ ("ssl" | "starttls" | "default" | "plain")) => s.to_string(),
+        _ => "ssl".into(),
+    };
+    dc.certificate_checks = match get("MAILIAM_DC_IC").as_deref().map(str::trim) {
+        Some(s @ ("0" | "1" | "3")) => s.to_string(),
+        _ => "3".into(),
+    };
+    dc
+}
+
+pub(crate) fn delta_chat_from_env() -> DeltaChat {
+    delta_chat_from_get(|k| std::env::var(k).ok())
+}
+
+pub(crate) fn env_u16_from(raw: Option<&str>, default: u16) -> u16 {
+    let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return default;
+    };
+    s.parse().unwrap_or_else(|_| {
+        trc::event!(
+            Server(trc::ServerEvent::Startup),
+            Details = format!("invalid port {s:?}, using {default}")
+        );
+        default
+    })
+}
+
+pub(crate) fn env_str_from(raw: Option<&str>, default: &str) -> String {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => default.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,5 +779,30 @@ mod tests {
             should_repair_http_listener("http", NetworkListenerProtocol::Smtp, &[8080], Some(80)),
             None
         );
+    }
+
+    #[test]
+    fn delta_chat_from_env_overlays_ports() {
+        let dc = delta_chat_from_get(|k| match k {
+            "MAILIAM_DC_IMAP_PORT" => Some("1993".into()),
+            "MAILIAM_DC_IC" => Some("1".into()),
+            "MAILIAM_DC_IMAP_HOST" => Some("mail.example.org".into()),
+            _ => None,
+        });
+        assert_eq!(dc.imap_port, 1993u64);
+        assert_eq!(dc.certificate_checks, "1");
+        assert_eq!(dc.imap_host, "mail.example.org");
+        assert_eq!(dc.smtp_port, 465u64);
+    }
+
+    #[test]
+    fn delta_chat_from_env_rejects_bad_security() {
+        let dc = delta_chat_from_get(|k| match k {
+            "MAILIAM_DC_IMAP_SECURITY" => Some("bogus".into()),
+            "MAILIAM_DC_IC" => Some("9".into()),
+            _ => None,
+        });
+        assert_eq!(dc.imap_security, "ssl");
+        assert_eq!(dc.certificate_checks, "3");
     }
 }

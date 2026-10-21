@@ -7,14 +7,15 @@
 use common::Server;
 use deltachat::{
     altcha::{AltchaChallenge, AltchaEngine, AltchaPayload},
-    config::{DeltaChatSettings, EndpointSecurity, EndpointsConfig, MailEndpointConfig},
-    dclogin::build_dclogin_uri,
+    config::DeltaChatSettings,
     dispatch_web_asset, dispatch_xdc_asset,
     error::DeltaChatError,
-    models::{AppsCatalogResponse, ConfigDiscoveryResponse, HealthResponse},
+    models::{
+        AppsCatalogResponse, ConfigDiscoveryResponse, CustomAccountRequest, CustomAccountResponse,
+        HealthResponse, InstantAccountRequest, InstantAccountResponse,
+    },
     DeltaChatRouter,
 };
-use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -65,28 +66,95 @@ async fn test_e2e_health_and_config_discovery() {
     assert_eq!(health.version, "1.0.0-chatchi");
     assert!(health.uptime_seconds < 60);
 
-    // 2. Test /api/v1/config discovery payload
-    let (status, body, content_type) = router
-        .dispatch_api(&settings, &server, "GET", "/api/v1/config", None)
-        .await
-        .expect("config discovery must succeed");
+    // GET /api/v1/config and POST /api/v1/accounts/* read server.core; dummy_server is MaybeUninit.
+    // Live GET config / signup HTTP is not run here. Public JSON contract: serde tests below.
+    let res = router
+        .dispatch_api(&settings, &server, "POST", "/api/v1/config", None)
+        .await;
+    assert_eq!(res, Err(DeltaChatError::MethodNotAllowed));
+}
 
-    assert_eq!(status, 200);
-    assert_eq!(content_type, "application/json; charset=utf-8");
+#[test]
+fn test_e2e_config_json_requires_hash_algorithm_and_certificate_checks() {
+    let json = r#"{
+        "domain":"example.org",
+        "registration_open":true,
+        "instant_accounts_enabled":true,
+        "custom_accounts_enabled":true,
+        "endpoints":{
+            "imap":{"host":"imap.example.org","port":143,"security":"starttls"},
+            "smtp":{"host":"smtp.example.org","port":587,"security":"plain"}
+        },
+        "altcha":{"required":false,"max_number":1000},
+        "password_hash_algorithm":"scrypt",
+        "certificate_checks":"1",
+        "instant_prefix_enabled":false,
+        "instant_prefix":"",
+        "custom_prefix_enabled":false,
+        "custom_prefix":""
+    }"#;
+    let cfg: ConfigDiscoveryResponse =
+        serde_json::from_str(json).expect("config JSON must include hash algorithm and ic");
+    assert_eq!(cfg.password_hash_algorithm, "scrypt");
+    assert_eq!(cfg.certificate_checks, "1");
 
-    let config: ConfigDiscoveryResponse =
-        serde_json::from_str(&body).expect("valid config discovery json");
-    assert_eq!(config.domain, "localhost");
-    assert!(config.registration_open);
-    assert!(config.instant_accounts_enabled);
-    assert!(config.custom_accounts_enabled);
-    assert_eq!(config.endpoints.imap.port, 993);
-    assert_eq!(config.endpoints.smtp.port, 465);
+    let missing = r#"{
+        "domain":"example.org",
+        "registration_open":true,
+        "instant_accounts_enabled":true,
+        "custom_accounts_enabled":true,
+        "endpoints":{
+            "imap":{"host":"imap.example.org","port":143,"security":"starttls"},
+            "smtp":{"host":"smtp.example.org","port":587,"security":"plain"}
+        },
+        "altcha":{"required":false,"max_number":1000}
+    }"#;
+    assert!(
+        serde_json::from_str::<ConfigDiscoveryResponse>(missing).is_err(),
+        "config JSON without password_hash_algorithm and certificate_checks must fail"
+    );
+}
 
-    // Altcha requirements verification
-    assert!(config.altcha.required);
-    assert_eq!(config.altcha.max_number, 50_000);
-    assert!(config.altcha.challenge.is_some());
+#[test]
+fn test_e2e_account_http_contract_hash_only() {
+    let instant_req = InstantAccountRequest {
+        username: "dc_0123456789ab".into(),
+        password_hash: "$scrypt$ln=15,r=8,p=1$c2FsdA$hash".into(),
+        altcha_payload: None,
+        password: None,
+    };
+    let instant_req_json = serde_json::to_string(&instant_req).unwrap();
+    assert!(instant_req_json.contains("\"username\""));
+    assert!(instant_req_json.contains("\"password_hash\""));
+
+    let custom_req = CustomAccountRequest {
+        username: "alice".into(),
+        password_hash: "$scrypt$ln=15,r=8,p=1$c2FsdA$hash".into(),
+        altcha_payload: None,
+        password: None,
+    };
+    let custom_req_json = serde_json::to_string(&custom_req).unwrap();
+    assert!(custom_req_json.contains("\"username\""));
+    assert!(custom_req_json.contains("\"password_hash\""));
+
+    let instant_resp = InstantAccountResponse {
+        account_id: "acc_1".into(),
+        email: "dc_0123456789ab@example.org".into(),
+        account_type: "instant".into(),
+        expires_at: None,
+    };
+    let instant_resp_json = serde_json::to_string(&instant_resp).unwrap();
+    assert!(!instant_resp_json.contains("dclogin_link"));
+    assert!(!instant_resp_json.contains("password"));
+
+    let custom_resp = CustomAccountResponse {
+        account_id: "acc_2".into(),
+        email: "alice@example.org".into(),
+        account_type: "custom".into(),
+    };
+    let custom_resp_json = serde_json::to_string(&custom_resp).unwrap();
+    assert!(!custom_resp_json.contains("dclogin_link"));
+    assert!(!custom_resp_json.contains("password"));
 }
 
 #[tokio::test]
@@ -149,53 +217,6 @@ async fn test_e2e_altcha_challenge_and_verification() {
         Err(DeltaChatError::AltchaReplay),
         "replayed payload must be rejected"
     );
-}
-
-#[test]
-fn test_e2e_dclogin_builder_compliance() {
-    let endpoints = EndpointsConfig {
-        imap: MailEndpointConfig {
-            host: "imap.deltachat.example.org".to_string(),
-            port: 993,
-            security: EndpointSecurity::Ssl,
-        },
-        smtp: MailEndpointConfig {
-            host: "smtp.deltachat.example.org".to_string(),
-            port: 587,
-            security: EndpointSecurity::Starttls,
-        },
-        ic: 3,
-    };
-
-    let email = "alice@deltachat.example.org";
-    let password = "SuperSecretPassword123!#&";
-
-    // 1. Build dclogin: URI with custom parameters
-    let uri = build_dclogin_uri(email, password, &endpoints);
-
-    // 2. Verify RFC / DeltaChat URL structure
-    assert!(
-        uri.starts_with("dclogin:alice@deltachat.example.org/?"),
-        "URI must start with dclogin:<email>/?"
-    );
-
-    let query_str = uri
-        .strip_prefix("dclogin:alice@deltachat.example.org/?")
-        .expect("dclogin prefix match");
-
-    let params: HashMap<String, String> = form_urlencoded::parse(query_str.as_bytes())
-        .into_owned()
-        .collect();
-
-    assert_eq!(params.get("ih").map(String::as_str), Some("imap.deltachat.example.org"));
-    assert_eq!(params.get("ip").map(String::as_str), Some("993"));
-    assert_eq!(params.get("is").map(String::as_str), Some("ssl"));
-    assert_eq!(params.get("sh").map(String::as_str), Some("smtp.deltachat.example.org"));
-    assert_eq!(params.get("sp").map(String::as_str), Some("587"));
-    assert_eq!(params.get("ss").map(String::as_str), Some("starttls"));
-    assert_eq!(params.get("ic").map(String::as_str), Some("3"));
-    assert_eq!(params.get("p").map(String::as_str), Some("SuperSecretPassword123!#&"));
-    assert_eq!(params.get("v").map(String::as_str), Some("1"));
 }
 
 #[tokio::test]
@@ -291,4 +312,102 @@ fn test_e2e_web_spa_static_asset_serving() {
         router.dispatch_web_asset("/api/v1/health").is_none(),
         "router dispatch_web_asset must isolate API routes"
     );
+}
+
+#[tokio::test]
+async fn test_registration_validation_rejections() {
+    let router = DeltaChatRouter::new();
+    let server = dummy_server();
+    let mut settings = DeltaChatSettings {
+        enabled: true,
+        registration_open: true,
+        custom_accounts_enabled: true,
+        instant_accounts_enabled: true,
+        instant_prefix_enabled: true,
+        instant_prefix: "dc_".into(),
+        username_blacklist: vec!["admin".into(), "*support*".into()],
+        ..Default::default()
+    };
+
+    // 1. Exact blacklisted username fails at validation before DB write
+    let bad_req = serde_json::to_vec(&CustomAccountRequest {
+        username: "admin".into(),
+        password_hash: "hash".into(),
+        altcha_payload: None,
+        password: None,
+    })
+    .unwrap();
+    let err = router
+        .dispatch_api(
+            &settings,
+            &server,
+            "POST",
+            "/api/v1/accounts/custom",
+            Some(&bad_req),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, DeltaChatError::InvalidUsername(_)));
+
+    // 2. Wildcard blacklisted username fails
+    let bad_req2 = serde_json::to_vec(&CustomAccountRequest {
+        username: "tech-support".into(),
+        password_hash: "hash".into(),
+        altcha_payload: None,
+        password: None,
+    })
+    .unwrap();
+    let err2 = router
+        .dispatch_api(
+            &settings,
+            &server,
+            "POST",
+            "/api/v1/accounts/custom",
+            Some(&bad_req2),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err2, DeltaChatError::InvalidUsername(_)));
+
+    // 3. Instant prefix collision rejection ("dc_alice")
+    let bad_req3 = serde_json::to_vec(&CustomAccountRequest {
+        username: "dc_alice".into(),
+        password_hash: "hash".into(),
+        altcha_payload: None,
+        password: None,
+    })
+    .unwrap();
+    let err3 = router
+        .dispatch_api(
+            &settings,
+            &server,
+            "POST",
+            "/api/v1/accounts/custom",
+            Some(&bad_req3),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err3, DeltaChatError::InvalidUsername(_)));
+
+    // 4. Custom prefix enforcement rejection ("alice" when custom_prefix = "usr_")
+    settings.custom_prefix_enabled = true;
+    settings.custom_prefix = "usr_".into();
+    let bad_req4 = serde_json::to_vec(&CustomAccountRequest {
+        username: "alice".into(),
+        password_hash: "hash".into(),
+        altcha_payload: None,
+        password: None,
+    })
+    .unwrap();
+    let err4 = router
+        .dispatch_api(
+            &settings,
+            &server,
+            "POST",
+            "/api/v1/accounts/custom",
+            Some(&bad_req4),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err4, DeltaChatError::InvalidUsername(_)));
 }

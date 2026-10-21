@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use common::Server;
-use registry::schema::enums::ServiceProtocol;
+use crate::error::DeltaChatError;
 use serde::{Deserialize, Serialize};
 use types::id::Id;
 
@@ -15,6 +14,7 @@ pub enum EndpointSecurity {
     #[default]
     Ssl,
     Starttls,
+    Default,
     Plain,
 }
 
@@ -23,7 +23,26 @@ impl EndpointSecurity {
         match self {
             Self::Ssl => "ssl",
             Self::Starttls => "starttls",
+            Self::Default => "default",
             Self::Plain => "plain",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CertificateChecks {
+    Automatic = 0,
+    Strict = 1,
+    #[default]
+    AcceptInvalid = 3,
+}
+
+impl CertificateChecks {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Automatic => "0",
+            Self::Strict => "1",
+            Self::AcceptInvalid => "3",
         }
     }
 }
@@ -39,7 +58,6 @@ pub struct MailEndpointConfig {
 pub struct EndpointsConfig {
     pub imap: MailEndpointConfig,
     pub smtp: MailEndpointConfig,
-    pub ic: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +80,14 @@ pub struct DeltaChatSettings {
     pub altcha_required: bool,
     pub altcha_max_number: u64,
     pub altcha_hmac_secret: String,
+    pub imap: MailEndpointConfig,
+    pub smtp: MailEndpointConfig,
+    pub certificate_checks: CertificateChecks,
+    pub instant_prefix_enabled: bool,
+    pub instant_prefix: String,
+    pub custom_prefix_enabled: bool,
+    pub custom_prefix: String,
+    pub username_blacklist: Vec<String>,
 }
 
 impl Default for DeltaChatSettings {
@@ -77,6 +103,25 @@ impl Default for DeltaChatSettings {
             altcha_required: false,
             altcha_max_number: 100_000,
             altcha_hmac_secret: String::new(),
+            imap: MailEndpointConfig {
+                host: String::new(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: String::new(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+            certificate_checks: CertificateChecks::AcceptInvalid,
+            instant_prefix_enabled: true,
+            instant_prefix: "dc_".into(),
+            custom_prefix_enabled: false,
+            custom_prefix: String::new(),
+            username_blacklist: registry::schema::structs_impl::DEFAULT_USERNAME_BLACKLIST
+                .iter()
+                .map(|s| s.trim().to_ascii_lowercase())
+                .collect(),
         }
     }
 }
@@ -94,116 +139,57 @@ impl DeltaChatSettings {
         self.altcha_hmac_secret.as_bytes().to_vec()
     }
 
+    #[cfg(test)]
     pub fn default_endpoints() -> EndpointsConfig {
-        endpoints_from_env("localhost", None)
-    }
-
-    pub fn advertised_endpoints(server: &Server) -> EndpointsConfig {
-        let default_host = if server.core.network.server_name.is_empty() {
-            "localhost"
-        } else {
-            server.core.network.server_name.as_str()
-        };
-        endpoints_from_env(default_host, Some(server))
-    }
-}
-
-fn env_tls_on() -> bool {
-    match std::env::var("MAILIAM_TLS") {
-        Ok(raw) => matches!(raw.to_ascii_lowercase().as_str(), "1" | "true"),
-        Err(_) => true,
+        EndpointsConfig {
+            imap: MailEndpointConfig {
+                host: "localhost".into(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: "localhost".into(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+        }
     }
 }
 
-fn parse_dc_port(raw: Option<&str>, tls_default: u16, plain_default: u16, tls: bool) -> u16 {
-    match raw.and_then(|s| s.parse::<u16>().ok()).filter(|&p| p != 0) {
-        Some(p) => p,
-        None if tls => tls_default,
-        None => plain_default,
+pub fn endpoints_from_settings(settings: &DeltaChatSettings) -> Result<EndpointsConfig, DeltaChatError> {
+    Ok(EndpointsConfig {
+        imap: settings.imap.clone(),
+        smtp: settings.smtp.clone(),
+    })
+}
+
+pub fn fill_empty_endpoint_hosts(endpoints: &mut EndpointsConfig, domain: &str) {
+    let domain = domain.trim();
+    if domain.is_empty() || domain == "localhost" || domain == "localhost.local" {
+        return;
+    }
+    if endpoints.imap.host.trim().is_empty() {
+        endpoints.imap.host = domain.to_string();
+    }
+    if endpoints.smtp.host.trim().is_empty() {
+        endpoints.smtp.host = domain.to_string();
     }
 }
 
-fn parse_dc_security(raw: Option<&str>, tls: bool) -> EndpointSecurity {
-    match raw.map(|s| s.to_ascii_lowercase()).as_deref() {
-        Some("ssl") => EndpointSecurity::Ssl,
-        Some("starttls") => EndpointSecurity::Starttls,
-        Some("plain") => EndpointSecurity::Plain,
-        _ if tls => EndpointSecurity::Ssl,
-        _ => EndpointSecurity::Plain,
+fn parse_security(s: &str) -> EndpointSecurity {
+    match s {
+        "starttls" => EndpointSecurity::Starttls,
+        "default" => EndpointSecurity::Default,
+        "plain" => EndpointSecurity::Plain,
+        _ => EndpointSecurity::Ssl,
     }
 }
 
-fn parse_dc_ic(raw: Option<&str>, tls: bool) -> u8 {
-    match raw {
-        Some("0") => 0,
-        Some("1") => 1,
-        Some("3") => 3,
-        _ if tls => 3,
-        _ => 0,
-    }
-}
-
-fn endpoints_from_env(default_host: &str, server: Option<&Server>) -> EndpointsConfig {
-    let tls = env_tls_on();
-    let imap_host = std::env::var("MAILIAM_DC_IMAP_HOST")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            server.and_then(|s| {
-                s.core
-                    .network
-                    .info
-                    .services
-                    .get(&ServiceProtocol::Imap)
-                    .and_then(|svc| svc.hostname.clone())
-            })
-        })
-        .unwrap_or_else(|| default_host.to_string());
-    let smtp_host = std::env::var("MAILIAM_DC_SMTP_HOST")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            server.and_then(|s| {
-                s.core
-                    .network
-                    .info
-                    .services
-                    .get(&ServiceProtocol::Smtp)
-                    .and_then(|svc| svc.hostname.clone())
-            })
-        })
-        .unwrap_or_else(|| default_host.to_string());
-    EndpointsConfig {
-        imap: MailEndpointConfig {
-            host: imap_host,
-            port: parse_dc_port(
-                std::env::var("MAILIAM_DC_IMAP_PORT").ok().as_deref(),
-                993,
-                143,
-                tls,
-            ),
-            security: parse_dc_security(
-                std::env::var("MAILIAM_DC_IMAP_SECURITY").ok().as_deref(),
-                tls,
-            ),
-        },
-        smtp: MailEndpointConfig {
-            host: smtp_host,
-            port: parse_dc_port(
-                std::env::var("MAILIAM_DC_SMTP_PORT").ok().as_deref(),
-                465,
-                587,
-                tls,
-            ),
-            security: parse_dc_security(
-                std::env::var("MAILIAM_DC_SMTP_SECURITY").ok().as_deref(),
-                tls,
-            ),
-        },
-        ic: parse_dc_ic(
-            std::env::var("MAILIAM_DC_IC").ok().as_deref(),
-            tls,
-        ),
+fn parse_ic(s: &str) -> CertificateChecks {
+    match s {
+        "0" => CertificateChecks::Automatic,
+        "1" => CertificateChecks::Strict,
+        _ => CertificateChecks::AcceptInvalid,
     }
 }
 
@@ -220,6 +206,27 @@ impl From<registry::schema::structs::DeltaChat> for DeltaChatSettings {
             altcha_required: c.altcha_required,
             altcha_max_number: c.altcha_max_number,
             altcha_hmac_secret: c.altcha_hmac_secret,
+            imap: MailEndpointConfig {
+                host: c.imap_host,
+                port: u16::try_from(c.imap_port).unwrap_or(993),
+                security: parse_security(&c.imap_security),
+            },
+            smtp: MailEndpointConfig {
+                host: c.smtp_host,
+                port: u16::try_from(c.smtp_port).unwrap_or(465),
+                security: parse_security(&c.smtp_security),
+            },
+            certificate_checks: parse_ic(&c.certificate_checks),
+            instant_prefix_enabled: c.instant_prefix_enabled,
+            instant_prefix: c.instant_prefix,
+            custom_prefix_enabled: c.custom_prefix_enabled,
+            custom_prefix: c.custom_prefix,
+            username_blacklist: c
+                .username_blacklist
+                .into_inner()
+                .into_iter()
+                .map(|s| s.trim().to_ascii_lowercase())
+                .collect(),
         }
     }
 }
@@ -235,6 +242,14 @@ mod tests {
         assert!(!settings.domain_id.is_valid());
         assert!(settings.allowed_domains.is_empty());
         assert!(!settings.altcha_required);
+        assert!(settings.instant_prefix_enabled);
+        assert_eq!(settings.instant_prefix, "dc_");
+        assert!(!settings.custom_prefix_enabled);
+        assert_eq!(settings.custom_prefix, "");
+        assert_eq!(
+            settings.username_blacklist,
+            registry::schema::structs_impl::DEFAULT_USERNAME_BLACKLIST
+        );
     }
 
     #[test]
@@ -252,19 +267,124 @@ mod tests {
     }
 
     #[test]
-    fn dc_port_security_ic_from_raw() {
-        assert_eq!(parse_dc_port(None, 993, 143, true), 993);
-        assert_eq!(parse_dc_port(None, 993, 143, false), 143);
-        assert_eq!(parse_dc_port(Some("0"), 993, 143, true), 993);
-        assert_eq!(parse_dc_port(Some("1143"), 993, 143, true), 1143);
-        assert_eq!(parse_dc_security(None, true), EndpointSecurity::Ssl);
-        assert_eq!(parse_dc_security(None, false), EndpointSecurity::Plain);
-        assert_eq!(
-            parse_dc_security(Some("STARTTLS"), true),
-            EndpointSecurity::Starttls
-        );
-        assert_eq!(parse_dc_ic(None, true), 3);
-        assert_eq!(parse_dc_ic(None, false), 0);
-        assert_eq!(parse_dc_ic(Some("1"), false), 1);
+    fn security_and_ic_round_trip_as_dclogin_tokens() {
+        assert_eq!(EndpointSecurity::Starttls.as_str(), "starttls");
+        assert_eq!(EndpointSecurity::Plain.as_str(), "plain");
+        assert_eq!(EndpointSecurity::Default.as_str(), "default");
+        assert_eq!(CertificateChecks::Strict.as_str(), "1");
+        assert_eq!(CertificateChecks::Automatic.as_str(), "0");
+        assert_eq!(CertificateChecks::AcceptInvalid.as_str(), "3");
+    }
+
+    #[test]
+    fn empty_hosts_fill_from_primary_domain() {
+        let mut endpoints = EndpointsConfig {
+            imap: MailEndpointConfig {
+                host: String::new(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: String::new(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+        };
+        fill_empty_endpoint_hosts(&mut endpoints, "example.org");
+        assert_eq!(endpoints.imap.host, "example.org");
+        assert_eq!(endpoints.smtp.host, "example.org");
+    }
+
+    #[test]
+    fn saved_host_is_not_overwritten() {
+        let mut endpoints = EndpointsConfig {
+            imap: MailEndpointConfig {
+                host: "imap.custom".into(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: String::new(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+        };
+        fill_empty_endpoint_hosts(&mut endpoints, "example.org");
+        assert_eq!(endpoints.imap.host, "imap.custom");
+        assert_eq!(endpoints.smtp.host, "example.org");
+    }
+
+    #[test]
+    fn empty_domain_does_not_fill_hosts() {
+        let mut endpoints = EndpointsConfig {
+            imap: MailEndpointConfig {
+                host: String::new(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: "smtp.custom".into(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+        };
+        fill_empty_endpoint_hosts(&mut endpoints, "");
+        assert!(endpoints.imap.host.is_empty());
+        assert_eq!(endpoints.smtp.host, "smtp.custom");
+    }
+
+    #[test]
+    fn dummy_localhost_does_not_fill_hosts() {
+        let mut endpoints = EndpointsConfig {
+            imap: MailEndpointConfig {
+                host: String::new(),
+                port: 993,
+                security: EndpointSecurity::Ssl,
+            },
+            smtp: MailEndpointConfig {
+                host: String::new(),
+                port: 465,
+                security: EndpointSecurity::Ssl,
+            },
+        };
+        fill_empty_endpoint_hosts(&mut endpoints, "localhost");
+        fill_empty_endpoint_hosts(&mut endpoints, "localhost.local");
+        assert!(endpoints.imap.host.is_empty());
+        assert!(endpoints.smtp.host.is_empty());
+    }
+
+    #[test]
+    fn null_imap_host_does_not_require_smtp_host() {
+        let c: registry::schema::structs::DeltaChat =
+            serde_json::from_str(r#"{"imapHost":null,"smtpHost":"smtp.example.org"}"#).unwrap();
+        assert_eq!(c.imap_host, "");
+        assert_eq!(c.smtp_host, "smtp.example.org");
+    }
+
+    #[test]
+    fn null_smtp_host_does_not_require_imap_host() {
+        let c: registry::schema::structs::DeltaChat =
+            serde_json::from_str(r#"{"imapHost":"imap.example.org","smtpHost":null}"#).unwrap();
+        assert_eq!(c.imap_host, "imap.example.org");
+        assert_eq!(c.smtp_host, "");
+    }
+
+    #[test]
+    fn test_settings_from_registry_prefixes_and_blacklist() {
+        let reg = registry::schema::structs::DeltaChat {
+            instant_prefix_enabled: true,
+            instant_prefix: "custom_dc_".into(),
+            custom_prefix_enabled: true,
+            custom_prefix: "usr_".into(),
+            username_blacklist: registry::types::map::Map::new(vec!["  BadUser  ".to_string()]),
+            ..Default::default()
+        };
+
+        let settings = DeltaChatSettings::from(reg);
+        assert!(settings.instant_prefix_enabled);
+        assert_eq!(settings.instant_prefix, "custom_dc_");
+        assert!(settings.custom_prefix_enabled);
+        assert_eq!(settings.custom_prefix, "usr_");
+        assert_eq!(settings.username_blacklist, vec!["baduser"]);
     }
 }
