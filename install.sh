@@ -197,22 +197,26 @@ resolve_paths() {
         if [ "$_os" = freebsd ]; then
             _conf_dir=/usr/local/etc/mailiam
             _data_dir=/var/db/mailiam
+            _legacy_conf=/usr/local/etc/stalwart
         else
             _conf_dir=/etc/mailiam
             _data_dir=/var/lib/mailiam
+            _legacy_conf=/etc/stalwart
         fi
     else
         _bin_dir="${_prefix}/bin"
         _conf_dir="${_prefix}/etc"
         _log_dir="${_prefix}/logs"
         _data_dir="${_prefix}/data"
+        _legacy_conf=""
     fi
     if contains_cr_lf_or_quote "$_bin_dir" || contains_cr_lf_or_quote "$_conf_dir" \
-        || contains_cr_lf_or_quote "$_data_dir" || contains_cr_lf_or_quote "$_log_dir"; then
+        || contains_cr_lf_or_quote "$_data_dir" || contains_cr_lf_or_quote "$_log_dir" \
+        || contains_cr_lf_or_quote "$_legacy_conf"; then
         return 1
     fi
-    printf "_bin_dir='%s'\n_conf_dir='%s'\n_data_dir='%s'\n_log_dir='%s'\n" \
-        "$_bin_dir" "$_conf_dir" "$_data_dir" "$_log_dir"
+    printf "_bin_dir='%s'\n_conf_dir='%s'\n_data_dir='%s'\n_log_dir='%s'\n_legacy_conf='%s'\n" \
+        "$_bin_dir" "$_conf_dir" "$_data_dir" "$_log_dir" "$_legacy_conf"
 }
 
 upsert_env() {
@@ -847,6 +851,18 @@ print_update_summary() {
     print_hr
 }
 
+is_system_account() {
+    [ -n "${1:-}" ] || return 1
+    case "$1" in
+        root|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|nobody|operator|adm|wheel|kmem|sshd|messagebus)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 print_uninstall_summary() {
     clear_step
     print_box_title "                    MailiaM Uninstall Summary"
@@ -919,10 +935,20 @@ print_update_success() {
 
 print_uninstall_success() {
     say ""
-    print_box_title "                  MailiaM Uninstalled Successfully"
-    say ""
+    if [ "${_step_failures:-0}" -gt 0 ]; then
+        print_box_title "       MailiaM Uninstallation Completed with Warnings"
+        say ""
+        printf '  Status:            Completed with warnings - see /tmp/mailiam-uninstall.log\n'
+    else
+        print_box_title "                  MailiaM Uninstalled Successfully"
+        say ""
+    fi
     printf '  Binary & Services: Removed\n'
-    printf '  Service Account:   %s (removed)\n' "$_account"
+    if is_system_account "${_account:-}"; then
+        printf '  Service Account:   %s (preserved - system account)\n' "$_account"
+    else
+        printf '  Service Account:   %s (removed)\n' "$_account"
+    fi
     if [ "${_purge:-0}" -eq 1 ]; then
         printf '  Mail Data & Conf:  %sPurged%s\n' "$CLR_RED" "$CLR_RESET"
     else
@@ -957,12 +983,7 @@ ensure_bin_symlink() {
 }
 
 ensure_conf_symlink() {
-    [ "$_prefix" = /usr/local ] || return 0
-    if [ "$_os" = freebsd ]; then
-        _legacy_conf=/usr/local/etc/stalwart
-    else
-        _legacy_conf=/etc/stalwart
-    fi
+    [ -n "${_legacy_conf:-}" ] || return 0
     if [ ! -e "$_legacy_conf" ]; then
         ln -sfn mailiam "$_legacy_conf"
     fi
@@ -1311,41 +1332,56 @@ recovery_port() {
     printf '%s\n' 80
 }
 
+_step_failures=0
+_step_log=
+
+log_step() {
+    [ -n "${_step_log:-}" ] || return 0
+    _ls_ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
+    printf '[%s] %s\n' "$_ls_ts" "$*" >> "$_step_log"
+}
+
 log_uninstall() {
-    _lu_ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
-    printf '[%s] %s\n' "$_lu_ts" "$*" >> /tmp/mailiam-uninstall.log
+    _step_log="${_step_log:-/tmp/mailiam-uninstall.log}"
+    log_step "$@"
+}
+
+run_step() {
+    _rs_idx="$1"
+    _rs_tot="$2"
+    _rs_desc="$3"
+    shift 3
+    printf '  %s[%s/%s]%s %-50s' "$CLR_BLUE" "$_rs_idx" "$_rs_tot" "$CLR_RESET" "$_rs_desc"
+    log_step "Step [$_rs_idx/$_rs_tot]: $_rs_desc"
+    _rs_out=$(mktemp)
+    if "$@" > "$_rs_out" 2>&1; then
+        printf ' %s[OK]%s\n' "$CLR_GREEN" "$CLR_RESET"
+        if [ -s "$_rs_out" ]; then
+            while IFS= read -r _l; do
+                log_step "  output: $_l"
+            done < "$_rs_out"
+        fi
+        log_step "Step [$_rs_idx/$_rs_tot]: SUCCESS"
+        rm -f "$_rs_out"
+        return 0
+    else
+        _rs_rc=$?
+        _step_failures=$((_step_failures + 1))
+        printf ' %s[FAILED]%s\n' "$CLR_RED" "$CLR_RESET"
+        if [ -s "$_rs_out" ]; then
+            while IFS= read -r _l; do
+                log_step "  error: $_l"
+            done < "$_rs_out"
+        fi
+        log_step "Step [$_rs_idx/$_rs_tot]: FAILED (exit code $_rs_rc)"
+        rm -f "$_rs_out"
+        return "$_rs_rc"
+    fi
 }
 
 run_uninstall_step() {
-    _rus_idx="$1"
-    _rus_tot="$2"
-    _rus_desc="$3"
-    shift 3
-    printf '  %s[%s/%s]%s %-50s' "$CLR_BLUE" "$_rus_idx" "$_rus_tot" "$CLR_RESET" "$_rus_desc"
-    log_uninstall "Step [$_rus_idx/$_rus_tot]: $_rus_desc"
-    _rus_out=$(mktemp)
-    if "$@" > "$_rus_out" 2>&1; then
-        printf ' %s[OK]%s\n' "$CLR_GREEN" "$CLR_RESET"
-        if [ -s "$_rus_out" ]; then
-            while IFS= read -r _l; do
-                log_uninstall "  output: $_l"
-            done < "$_rus_out"
-        fi
-        log_uninstall "Step [$_rus_idx/$_rus_tot]: SUCCESS"
-        rm -f "$_rus_out"
-        return 0
-    else
-        _rus_rc=$?
-        printf ' %s[FAILED]%s\n' "$CLR_RED" "$CLR_RESET"
-        if [ -s "$_rus_out" ]; then
-            while IFS= read -r _l; do
-                log_uninstall "  error: $_l"
-            done < "$_rus_out"
-        fi
-        log_uninstall "Step [$_rus_idx/$_rus_tot]: FAILED (exit code $_rus_rc)"
-        rm -f "$_rus_out"
-        return "$_rus_rc"
-    fi
+    _step_log="${_step_log:-/tmp/mailiam-uninstall.log}"
+    run_step "$@"
 }
 
 uninstall_stop_service() {
@@ -1402,6 +1438,10 @@ uninstall_executables() {
 
 uninstall_account() {
     [ -n "$_account" ] || return 0
+    if is_system_account "$_account"; then
+        log_step "Skipping removal of protected system account: $_account"
+        return 0
+    fi
     case "${_os:-linux}" in
         freebsd)
             if check_cmd pw; then
@@ -1423,21 +1463,22 @@ uninstall_data() {
         for _dir in "$_conf_dir" "$_data_dir" "$_log_dir"; do
             case "$_dir" in
                 ""|"/"|"/bin"|"/usr"|"/etc"|"/var"|"/home"|"/root")
-                    log_uninstall "Skipping unsafe purge directory: $_dir"
+                    log_step "Skipping unsafe purge directory: $_dir"
                     ;;
                 *)
                     if [ -d "$_dir" ] || [ -L "$_dir" ]; then
                         rm -rf "$_dir"
-                        log_uninstall "Purged directory: $_dir"
+                        log_step "Purged directory: $_dir"
                     fi
                     ;;
             esac
         done
         if [ -n "${_legacy_conf:-}" ] && [ -L "$_legacy_conf" ]; then
             rm -f "$_legacy_conf"
+            log_step "Purged legacy configuration symlink: $_legacy_conf"
         fi
     else
-        log_uninstall "Preserving config ($_conf_dir), data ($_data_dir), and logs ($_log_dir)"
+        log_step "Preserving config ($_conf_dir), data ($_data_dir), and logs ($_log_dir)"
     fi
 }
 
@@ -1445,23 +1486,100 @@ uninstall_mailiam() {
     say ""
     say_header "Uninstalling MailiaM..."
     say ""
-    : > /tmp/mailiam-uninstall.log
-    log_uninstall "=== MailiaM Uninstallation Started ==="
-    log_uninstall "Init: ${_init:-none}, OS: ${_os:-unknown}, Account: ${_account:-none}"
-    log_uninstall "Paths: bin=$_bin_file, conf=$_conf_dir, data=$_data_dir, log=$_log_dir, purge=${_purge:-0}"
+    _step_log=/tmp/mailiam-uninstall.log
+    rm -f "$_step_log"
+    : > "$_step_log"
+    chmod 0600 "$_step_log" 2>/dev/null || true
+    log_step "=== MailiaM Uninstallation Started ==="
+    log_step "Init: ${_init:-none}, OS: ${_os:-unknown}, Account: ${_account:-none}"
+    log_step "Paths: bin=$_bin_file, conf=$_conf_dir, data=$_data_dir, log=$_log_dir, purge=${_purge:-0}"
 
-    run_uninstall_step 1 5 "Stopping MailiaM service..." uninstall_stop_service
-    run_uninstall_step 2 5 "Removing service configuration (${_init:-none})..." uninstall_service_unit
-    run_uninstall_step 3 5 "Removing binary and executables..." uninstall_executables
-    run_uninstall_step 4 5 "Removing service account (${_account})..." uninstall_account
+    run_step 1 5 "Stopping MailiaM service..." uninstall_stop_service || true
+    run_step 2 5 "Removing service configuration (${_init})..." uninstall_service_unit || true
+    run_step 3 5 "Removing binary and executables..." uninstall_executables || true
+    run_step 4 5 "Removing service account (${_account})..." uninstall_account || true
     if [ "${_purge:-0}" -eq 1 ]; then
-        run_uninstall_step 5 5 "Purging configuration and database directories..." uninstall_data
+        run_step 5 5 "Purging configuration and database directories..." uninstall_data || true
     else
-        run_uninstall_step 5 5 "Preserving configuration and data files..." uninstall_data
+        run_step 5 5 "Preserving configuration and data files..." uninstall_data || true
     fi
 
-    log_uninstall "=== MailiaM Uninstallation Completed ==="
+    log_step "=== MailiaM Uninstallation Completed ==="
     print_uninstall_success
+    if [ "${_step_failures:-0}" -gt 0 ]; then
+        return 1
+    fi
+    return 0
+}
+
+step_create_dirs() {
+    ensure mkdir -p "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir"
+    ensure_conf_symlink
+}
+
+step_install_binary() {
+    install_binary "$1"
+}
+
+step_write_env() {
+    ensure_generated_admin
+    write_env_file "$_env_file"
+}
+
+step_set_permissions() {
+    ensure chown "${_account}:${_account}" "$_conf_dir" "$_log_dir" "$_data_dir"
+    ensure chmod 0750 "$_conf_dir" "$_log_dir" "$_data_dir"
+    if [ -e "$_env_file" ]; then
+        ensure chown "root:${_account}" "$_env_file"
+        ensure chmod 0640 "$_env_file"
+    fi
+}
+
+step_install_service() {
+    case "${_init:-none}" in
+        systemd)
+            create_service_linux_systemd "$_bin_file" "$_config_file" "$_env_file" "$_account"
+            ;;
+        sysv)
+            create_service_linux_initd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
+            ;;
+        openrc)
+            create_service_linux_openrc "$_bin_file" "$_config_file" "$_env_file" "$_account"
+            ;;
+        freebsd)
+            create_service_freebsd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+step_update_service_and_permissions() {
+    step_set_permissions
+    step_install_service
+}
+
+step_start_service() {
+    if [ "${_SKIP_START:-0}" -ne 0 ] || [ "${_init:-none}" = none ]; then
+        return 0
+    fi
+    case "${_init}" in
+        systemd) systemctl restart mailiam.service ;;
+        sysv) service mailiam restart 2>/dev/null || /etc/init.d/mailiam restart ;;
+        openrc) rc-service mailiam restart ;;
+        freebsd) service mailiam restart 2>/dev/null || { service mailiam stop 2>/dev/null || true; service mailiam start; } ;;
+    esac
+}
+
+step_reconfig_env() {
+    if [ ! -e "$_env_file" ]; then
+        : > "$_env_file"
+        chmod 0640 "$_env_file"
+    fi
+    upsert_env "$_env_file" MAILIAM_HOSTNAME "$_hostname"
+    upsert_env "$_env_file" MAILIAM_PUBLIC_URL "$_public_url"
+    apply_mode2_admin "$_env_file"
 }
 
 main() {
@@ -1746,10 +1864,10 @@ main() {
         if [ "$_interactive" -eq 1 ]; then
             prompt_uninstall_purge
             print_uninstall_summary
-            confirm_or_abort "Proceed with uninstallation? [y/N]" N
+            confirm_or_abort "Proceed with uninstallation?" N
         fi
         uninstall_mailiam
-        return 0
+        return $?
     fi
 
     if [ "$_interactive" -eq 1 ]; then
@@ -1770,7 +1888,7 @@ main() {
         if [ "$_install_mode" -eq 1 ]; then
             if [ "$_no_start" -eq 0 ]; then
                 clear_step
-                prompt_yes_no _start_ans Y "Restart MailiaM service after update? [Y/n]"
+                prompt_yes_no _start_ans Y "Restart MailiaM service after update?"
                 if is_yes "$_start_ans"; then
                     _SKIP_START=0
                 else
@@ -1780,7 +1898,7 @@ main() {
                 _SKIP_START=1
             fi
             print_update_summary
-            confirm_or_abort "Proceed with update? [Y/n]"
+            confirm_or_abort "Proceed with update?"
         elif [ "$_install_mode" -eq 2 ]; then
             seed_mode2_from_env
             prompt_hostname_step
@@ -1788,7 +1906,7 @@ main() {
             prompt_admin keep
             if [ "$_no_start" -eq 0 ]; then
                 clear_step
-                prompt_yes_no _start_ans Y "Enable and start MailiaM service now? [Y/n]"
+                prompt_yes_no _start_ans Y "Enable and start MailiaM service now?"
                 if is_yes "$_start_ans"; then
                     _SKIP_START=0
                 else
@@ -1797,7 +1915,7 @@ main() {
             else
                 _SKIP_START=1
             fi
-            confirm_or_abort "Proceed with reconfigure? [Y/n]"
+            confirm_or_abort "Proceed with reconfigure?"
         else
             prompt_paths
             clear_step
@@ -1811,7 +1929,7 @@ main() {
             prompt_admin
             if [ "$_no_start" -eq 0 ]; then
                 clear_step
-                prompt_yes_no _start_ans Y "Enable and start MailiaM service now? [Y/n]"
+                prompt_yes_no _start_ans Y "Enable and start MailiaM service now?"
                 if is_yes "$_start_ans"; then
                     _SKIP_START=0
                 else
@@ -1821,7 +1939,7 @@ main() {
                 _SKIP_START=1
             fi
             print_install_summary
-            confirm_or_abort "Proceed with installation? [Y/n]"
+            confirm_or_abort "Proceed with installation?"
         fi
     else
         set_public_url_default
@@ -1833,83 +1951,53 @@ main() {
         fi
     fi
 
-    create_account "$_os" "$_account"
-    say "${CLR_BLUE}[1/5]${CLR_RESET} Creating directories..."
-    ensure mkdir -p "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir"
-    ensure_conf_symlink
-
-    if [ "$_install_mode" -ne 2 ]; then
-        _from_ver="$(installed_version "${_existing_bin:-$_bin_file}")" || _from_ver=
-        say "${CLR_BLUE}[2/5]${CLR_RESET} Installing binary..."
-        install_binary "$_target"
-        _to_ver="$(installed_version "$_bin_file")" || _to_ver=
-        [ -n "$_to_ver" ] || _to_ver="$_version"
-    fi
+    _from_ver=
+    _to_ver=
+    _step_failures=0
 
     case "$_install_mode" in
         1)
+            _from_ver="$(installed_version "${_existing_bin:-$_bin_file}")" || _from_ver=
+            run_step 1 4 "Stopping MailiaM service..." stop_service || true
+            run_step 2 4 "Installing updated binary..." step_install_binary "$_target"
+            _to_ver="$(installed_version "$_bin_file")" || _to_ver=
+            [ -n "$_to_ver" ] || _to_ver="$_version"
+            _orig_skip_start="${_SKIP_START:-0}"
+            _SKIP_START=1
+            run_step 3 4 "Updating ${_init} service unit and permissions..." step_update_service_and_permissions
+            _SKIP_START="$_orig_skip_start"
+            run_step 4 4 "Starting MailiaM service..." step_start_service
+            print_update_success
             ;;
         2)
-            if [ ! -e "$_env_file" ]; then
-                : > "$_env_file"
-                chmod 0640 "$_env_file"
-            fi
-            upsert_env "$_env_file" MAILIAM_HOSTNAME "$_hostname"
-            upsert_env "$_env_file" MAILIAM_PUBLIC_URL "$_public_url"
-            apply_mode2_admin "$_env_file"
-            ;;
-        *)
-            ensure_generated_admin
-            say "${CLR_BLUE}[3/5]${CLR_RESET} Writing env file at ${_env_file}..."
-            write_env_file "$_env_file"
-            ;;
-    esac
-
-    say "${CLR_BLUE}[4/5]${CLR_RESET} Setting permissions..."
-    ensure chown "${_account}:${_account}" "$_conf_dir" "$_log_dir" "$_data_dir"
-    ensure chmod 0750 "$_conf_dir" "$_log_dir" "$_data_dir"
-    if [ -e "$_env_file" ]; then
-        ensure chown "root:${_account}" "$_env_file"
-        ensure chmod 0640 "$_env_file"
-    fi
-
-    case "${_init}" in
-        systemd)
-            say "${CLR_BLUE}[5/5]${CLR_RESET} Installing systemd unit..."
-            create_service_linux_systemd "$_bin_file" "$_config_file" "$_env_file" "$_account"
-            ;;
-        sysv)
-            say "${CLR_BLUE}[5/5]${CLR_RESET} Installing SysV init script..."
-            create_service_linux_initd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
-            ;;
-        openrc)
-            say "${CLR_BLUE}[5/5]${CLR_RESET} Installing OpenRC service..."
-            create_service_linux_openrc "$_bin_file" "$_config_file" "$_env_file" "$_account"
-            ;;
-        freebsd)
-            say "${CLR_BLUE}[5/5]${CLR_RESET} Installing FreeBSD rc.d script..."
-            create_service_freebsd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
-            ;;
-        *)
-            say "${CLR_BLUE}[5/5]${CLR_RESET} No init system detected; start ${_bin_file} --config=${_config_file} yourself."
-            ;;
-    esac
-    if [ "${_init}" != none ] && [ "${_SKIP_START:-0}" -eq 0 ]; then
-        say "Service started."
-    elif [ "${_init}" != none ]; then
-        say "Service left stopped."
-    fi
-
-    case "$_install_mode" in
-        1) print_update_success ;;
-        2)
+            run_step 1 3 "Updating environment configuration (${_env_file})..." step_reconfig_env
+            run_step 2 3 "Verifying file permissions..." step_set_permissions
+            run_step 3 3 "Restarting MailiaM service..." step_start_service
             say ""
             say "Environment updated at ${_env_file}."
             say ""
             ;;
-        *) print_install_success ;;
+        *)
+            run_step 1 6 "Setting up service account (${_account})..." create_account "$_os" "$_account"
+            run_step 2 6 "Creating directories..." step_create_dirs
+            run_step 3 6 "Installing binary..." step_install_binary "$_target"
+            _to_ver="$(installed_version "$_bin_file")" || _to_ver=
+            [ -n "$_to_ver" ] || _to_ver="$_version"
+            run_step 4 6 "Writing environment configuration..." step_write_env
+            run_step 5 6 "Setting permissions..." step_set_permissions
+            run_step 6 6 "Installing ${_init} service unit..." step_install_service
+            if [ "${_init}" != none ] && [ "${_SKIP_START:-0}" -eq 0 ]; then
+                say "Service started."
+            elif [ "${_init}" != none ]; then
+                say "Service left stopped."
+            fi
+            print_install_success
+            ;;
     esac
 
+    if [ "${_step_failures:-0}" -gt 0 ]; then
+        return 1
+    fi
     return 0
 }
 

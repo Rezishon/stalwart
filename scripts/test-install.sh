@@ -146,15 +146,18 @@ eval "$(resolve_paths /usr/local linux)"
 [ "$_conf_dir" = "/etc/mailiam" ] || fail fhs-conf
 [ "$_data_dir" = "/var/lib/mailiam" ] || fail fhs-data
 [ "$_log_dir" = "/var/log/mailiam" ] || fail fhs-log
+[ "$_legacy_conf" = "/etc/stalwart" ] || fail fhs-legacy-conf
 
 eval "$(resolve_paths /usr/local freebsd)"
 [ "$_conf_dir" = "/usr/local/etc/mailiam" ] || fail fbsd-conf
 [ "$_data_dir" = "/var/db/mailiam" ] || fail fbsd-data
+[ "$_legacy_conf" = "/usr/local/etc/stalwart" ] || fail fbsd-legacy-conf
 
 eval "$(resolve_paths /opt/mail linux)"
 [ "$_bin_dir" = "/opt/mail/bin" ] || fail custom-bin
 [ "$_conf_dir" = "/opt/mail/etc" ] || fail custom-conf
 [ "$_data_dir" = "/opt/mail/data" ] || fail custom-data
+[ -z "$_legacy_conf" ] || fail custom-legacy-conf
 ok resolve_paths
 
 # --- set_env_file ---
@@ -434,6 +437,15 @@ if grep -q 'Primary domain for SMTP' "$_WORKDIR/hn.out"; then fail hostname-extr
 [ "$(grep -c . "$_WORKDIR/hn.out")" -eq 1 ] || fail hostname-not-single-line
 ok hostname-single-line
 
+# --- prompt styling consistency ---
+if grep -E '(prompt_yes_no|confirm_or_abort).*\[[yYnN]/[yYnN]\]' "$_install"; then
+    fail prompt-redundant-brackets
+fi
+_got_pyn=$(printf '\n' | { prompt_yes_no _pyn_test Y "Proceed with install?" > "$_WORKDIR/pyn.out"; printf '%s\n' "$_pyn_test"; })
+[ "$_got_pyn" = Y ] || fail pyn-default
+grep -q 'Proceed with install? (Default: Y): ' "$_WORKDIR/pyn.out" || fail pyn-format
+ok prompt_styling
+
 _pw=$(generate_password)
 [ "${#_pw}" -eq 16 ] || fail gen-pw-len
 printf '%s' "$_pw" | grep -Eq '^[A-Za-z0-9]{16}$' || fail gen-pw-alnum
@@ -514,7 +526,7 @@ grep -q 'mailiam.env' "$_WORKDIR/hints.out" || fail none-hints-env
 if grep -q 'service mailiam' "$_WORKDIR/hints.out"; then fail none-hints-no-service; fi
 ok print_service_hints-none
 
-# --- uninstall helpers ---
+# --- uninstall & step runner helpers ---
 _bin_file=/usr/local/bin/mailiam
 _conf_dir=/etc/mailiam
 _data_dir=/var/lib/mailiam
@@ -533,14 +545,62 @@ print_uninstall_summary > "$_WORKDIR/un_summary_purge.out"
 grep -q '/etc/mailiam (Purged)' "$_WORKDIR/un_summary_purge.out" || fail un-summary-purge
 
 _purge=0
+_step_failures=0
 print_uninstall_success > "$_WORKDIR/un_succ_keep.out"
 grep -q 'MailiaM Uninstalled Successfully' "$_WORKDIR/un_succ_keep.out" || fail un-succ-title
 grep -q 'Preserved in /var/lib/mailiam and /etc/mailiam' "$_WORKDIR/un_succ_keep.out" || fail un-succ-keep
+grep -q 'Service Account:   mailiam (removed)' "$_WORKDIR/un_succ_keep.out" || fail un-succ-acct-rm
 
 _purge=1
 print_uninstall_success > "$_WORKDIR/un_succ_purge.out"
 grep -q 'Mail Data & Conf:  Purged' "$_WORKDIR/un_succ_purge.out" || fail un-succ-purge
 
+# Failure handling in print_uninstall_success
+_step_failures=2
+print_uninstall_success > "$_WORKDIR/un_succ_warn.out"
+grep -q 'MailiaM Uninstallation Completed with Warnings' "$_WORKDIR/un_succ_warn.out" || fail un-warn-title
+grep -q 'Completed with warnings - see /tmp/mailiam-uninstall.log' "$_WORKDIR/un_succ_warn.out" || fail un-warn-msg
+_step_failures=0
+
+# System account safety
+expect_ok is_system_account root
+expect_ok is_system_account daemon
+expect_ok is_system_account bin
+expect_ok is_system_account nobody
+expect_fail is_system_account mailiam
+expect_fail is_system_account customuser
+expect_fail is_system_account ""
+_account=root
+uninstall_account
+print_uninstall_success > "$_WORKDIR/un_succ_root.out"
+grep -q 'Service Account:   root (preserved - system account)' "$_WORKDIR/un_succ_root.out" || fail un-root-preserved
+_account=mailiam
+
+# Unified run_step tests
+_step_failures=0
+run_step 1 6 "Setting up service account (mailiam)..." true > "$_WORKDIR/step_uni.out"
+grep -q '\[1/6\] Setting up service account (mailiam)...' "$_WORKDIR/step_uni.out" || fail step-uni-desc
+grep -q '\[OK\]' "$_WORKDIR/step_uni.out" || fail step-uni-ok
+[ "$_step_failures" -eq 0 ] || fail step-uni-failures-zero
+
+run_step 2 6 "Testing failing step..." false > "$_WORKDIR/step_uni_fail.out" || true
+grep -q '\[2/6\] Testing failing step...' "$_WORKDIR/step_uni_fail.out" || fail step-uni-fail-desc
+grep -q '\[FAILED\]' "$_WORKDIR/step_uni_fail.out" || fail step-uni-fail-tag
+[ "$_step_failures" -eq 1 ] || fail step-uni-failures-inc
+_step_failures=0
+
+# Custom logging in run_step
+_test_steplog="$_WORKDIR/step_custom.log"
+_step_log="$_test_steplog"
+run_step 3 6 "Testing custom step log..." true > "$_WORKDIR/step_custom.out"
+grep -q 'Step \[3/6\]: Testing custom step log...' "$_test_steplog" || fail step-custom-log-start
+grep -q 'Step \[3/6\]: SUCCESS' "$_test_steplog" || fail step-custom-log-succ
+run_step 4 6 "Testing custom step log fail..." sh -c 'echo "inner error msg" >&2; exit 3' > "$_WORKDIR/step_custom_fail.out" 2>&1 || true
+grep -q 'Step \[4/6\]: FAILED (exit code 3)' "$_test_steplog" || fail step-custom-log-fail
+grep -q 'error: inner error msg' "$_test_steplog" || fail step-custom-log-err-msg
+_step_log=
+
+# run_uninstall_step backward compatibility
 _log=/tmp/mailiam-uninstall.log
 rm -f "$_log"
 run_uninstall_step 1 5 "Testing step runner..." true > "$_WORKDIR/step.out"
@@ -565,9 +625,14 @@ _purge=0
 uninstall_data
 [ -d "$_test_conf" ] && [ -d "$_test_data" ] && [ -d "$_test_log" ] || fail un-data-preserved
 
+# Legacy symlink purge
+_test_legacy="$_WORKDIR/test_legacy_symlink"
+ln -s "$_test_conf" "$_test_legacy"
+_legacy_conf="$_test_legacy"
 _purge=1
 uninstall_data
 [ ! -d "$_test_conf" ] && [ ! -d "$_test_data" ] && [ ! -d "$_test_log" ] || fail un-data-purged
+[ ! -e "$_test_legacy" ] && [ ! -L "$_test_legacy" ] || fail un-legacy-purged
 
 _test_bin="$_WORKDIR/mailiam"
 _test_bak="$_WORKDIR/mailiam.bak"
