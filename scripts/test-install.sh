@@ -227,6 +227,9 @@ _mode=$(stat -c '%a' "$_tmp" 2>/dev/null || stat -f '%OLp' "$_tmp")
 _admin='ops:twelvecharsx'
 write_env_file "$_tmp"
 grep -q "^MAILIAM_RECOVERY_ADMIN='ops:twelvecharsx'$" "$_tmp" || fail env-admin
+_dc_imap_host=
+write_env_file "$_tmp"
+if grep -q '^MAILIAM_DC_' "$_tmp"; then fail dc-env-emitted-when-empty; fi
 _admin=
 rm -f "$_tmp"
 ok write_env_file
@@ -429,13 +432,6 @@ _got=$(printf '2\n' | { prompt_choice _c 1 3 "Choice [1-3]" >/dev/null; printf '
 _got=$(printf '9\n3\n' | { prompt_choice _c 1 3 "Choice [1-3]" >/dev/null; printf '%s\n' "$_c"; })
 [ "$_got" = 3 ] || fail choice-retry
 ok prompt_choice
-
-_hostname=mail.example.com
-printf '\n' | prompt_hostname_step > "$_WORKDIR/hn.out"
-grep -q 'Server hostname (FQDN)' "$_WORKDIR/hn.out" || fail hostname-prompt-missing
-if grep -q 'Primary domain for SMTP' "$_WORKDIR/hn.out"; then fail hostname-extra-hint; fi
-[ "$(grep -c . "$_WORKDIR/hn.out")" -eq 1 ] || fail hostname-not-single-line
-ok hostname-single-line
 
 # --- prompt styling consistency ---
 if grep -E '(prompt_yes_no|confirm_or_abort).*\[[yYnN]/[yYnN]\]' "$_install"; then

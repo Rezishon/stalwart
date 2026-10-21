@@ -636,13 +636,6 @@ prompt_paths() {
     esac
 }
 
-prompt_hostname_step() {
-    _hn_def="$(hostname_default "$_hostname")"
-    clear_step
-    prompt_value _hostname "$_hn_def" validate_hostname "Invalid hostname." \
-        "Server hostname (FQDN)"
-}
-
 prompt_ports() {
     clear_step
     say_header "Network listener ports:"
@@ -712,60 +705,6 @@ prompt_tls() {
     esac
 }
 
-dc_ic_label() {
-    case "$1" in
-        3) printf '%s\n' "Strict" ;;
-        1) printf '%s\n' "Accept invalid" ;;
-        *) printf '%s\n' "Disabled" ;;
-    esac
-}
-
-dc_sec_label() {
-    case "$1" in
-        ssl) printf '%s\n' "SSL/TLS" ;;
-        starttls) printf '%s\n' "STARTTLS" ;;
-        *) printf '%s\n' "Plain" ;;
-    esac
-}
-
-prompt_dc() {
-    set_dc_defaults
-    clear_step
-    say_header "DeltaChat autoconfig endpoints:"
-    printf '  - IMAP:        %s:%s %s(%s)%s\n' \
-        "$_dc_imap_host" "$_dc_imap_port" "$CLR_HINT" "$(dc_sec_label "$_dc_imap_security")" "$CLR_RESET"
-    printf '  - SMTP:        %s:%s %s(%s)%s\n' \
-        "$_dc_smtp_host" "$_dc_smtp_port" "$CLR_HINT" "$(dc_sec_label "$_dc_smtp_security")" "$CLR_RESET"
-    printf '  - Cert checks: %s %s(Automatic)%s\n' \
-        "$(dc_ic_label "$_dc_ic")" "$CLR_HINT" "$CLR_RESET"
-    say ""
-    say_header "Configure DeltaChat endpoints:"
-    say_opt 1 "Use server defaults" "Default"
-    say_opt 2 "Advanced: customize DeltaChat endpoints"
-    prompt_choice _dc_choice 1 2 "Choice [1-2]"
-    if [ "$_dc_choice" = 2 ]; then
-        clear_step
-        prompt_value _dc_imap_host "$_dc_imap_host" validate_hostname "Invalid hostname." \
-            "DeltaChat IMAP host"
-        clear_step
-        prompt_port _dc_imap_port "$_dc_imap_port" "DeltaChat IMAP port" nodup
-        clear_step
-        prompt_value _dc_imap_security "$_dc_imap_security" validate_dc_security \
-            "Invalid DeltaChat security." "DeltaChat IMAP security [ssl/starttls/default/plain]"
-        clear_step
-        prompt_value _dc_smtp_host "$_dc_smtp_host" validate_hostname "Invalid hostname." \
-            "DeltaChat SMTP host"
-        clear_step
-        prompt_port _dc_smtp_port "$_dc_smtp_port" "DeltaChat SMTP port" nodup
-        clear_step
-        prompt_value _dc_smtp_security "$_dc_smtp_security" validate_dc_security \
-            "Invalid DeltaChat security." "DeltaChat SMTP security [ssl/starttls/default/plain]"
-        clear_step
-        prompt_value _dc_ic "$_dc_ic" validate_dc_ic "Invalid DeltaChat ic." \
-            "DeltaChat certificate checks [0/1/3]"
-    fi
-}
-
 prompt_public_url_step() {
     set_public_url_default
     clear_step
@@ -793,7 +732,6 @@ print_install_summary() {
     printf '  Download Source:   %s\n' "$(src_display)"
     printf '  Install Base:      %s (Binary: %s)\n' "$_prefix" "$_bin_file"
     printf '  Service User:      %s (unprivileged)\n' "$_account"
-    printf '  Server Hostname:   %s\n' "$_hostname"
     printf '  Web URL:           %s%s%s\n' "$CLR_URL" "$_public_url" "$CLR_RESET"
     say ""
     say_header "  Active Listeners:"
@@ -806,12 +744,6 @@ print_install_summary() {
     printf '    - Web (HTTPS):   Port %s\n' "$_listen_https"
     say ""
     printf '  %sTLS / SSL:%s         %s\n' "$CLR_BOLD" "$CLR_RESET" "${_tls_mode:-$_tls}"
-    say ""
-    say_header "  DeltaChat Config:"
-    printf '    - Web & Relay:   %s/\n' "$_public_url"
-    printf '    - IMAP Server:   %s:%s (%s)\n' "$_dc_imap_host" "$_dc_imap_port" "$(dc_sec_label "$_dc_imap_security")"
-    printf '    - SMTP Server:   %s:%s (%s)\n' "$_dc_smtp_host" "$_dc_smtp_port" "$(dc_sec_label "$_dc_smtp_security")"
-    printf '    - Cert Checks:   %s (ic=%s)\n' "$(dc_ic_label "$_dc_ic")" "$_dc_ic"
     say ""
     if [ "$_admin" = random ] || [ -z "${_admin:-}" ]; then
         printf '  %sAdmin Account:%s     admin (password generated next)\n' \
@@ -1901,7 +1833,6 @@ main() {
             confirm_or_abort "Proceed with update?"
         elif [ "$_install_mode" -eq 2 ]; then
             seed_mode2_from_env
-            prompt_hostname_step
             prompt_public_url_step
             prompt_admin keep
             if [ "$_no_start" -eq 0 ]; then
@@ -1921,10 +1852,8 @@ main() {
             clear_step
             prompt_value _account "$_account" validate_user "Invalid user." \
                 "MailiaM user account"
-            prompt_hostname_step
             prompt_ports
             prompt_tls
-            prompt_dc
             prompt_public_url_step
             prompt_admin
             if [ "$_no_start" -eq 0 ]; then
@@ -1943,7 +1872,6 @@ main() {
         fi
     else
         set_public_url_default
-        set_dc_defaults
         if [ "$_no_start" -eq 1 ]; then
             _SKIP_START=1
         else
@@ -2110,15 +2038,17 @@ write_env_file() {
         printf '\n'
         printf '%s\n' '# TLS on inserted listeners (1/true/0/false).'
         emit_env MAILIAM_TLS "$_tls" || return 1
-        printf '\n'
-        printf '%s\n' '# DeltaChat advertised endpoints (first insert only).'
-        emit_env MAILIAM_DC_IMAP_HOST "$_dc_imap_host" || return 1
-        emit_env MAILIAM_DC_IMAP_PORT "$_dc_imap_port" || return 1
-        emit_env MAILIAM_DC_IMAP_SECURITY "$_dc_imap_security" || return 1
-        emit_env MAILIAM_DC_SMTP_HOST "$_dc_smtp_host" || return 1
-        emit_env MAILIAM_DC_SMTP_PORT "$_dc_smtp_port" || return 1
-        emit_env MAILIAM_DC_SMTP_SECURITY "$_dc_smtp_security" || return 1
-        emit_env MAILIAM_DC_IC "$_dc_ic" || return 1
+        if [ -n "$_dc_imap_host" ]; then
+            printf '\n'
+            printf '%s\n' '# DeltaChat advertised endpoints (override).'
+            emit_env MAILIAM_DC_IMAP_HOST "$_dc_imap_host" || return 1
+            [ -n "$_dc_imap_port" ] && { emit_env MAILIAM_DC_IMAP_PORT "$_dc_imap_port" || return 1; }
+            [ -n "$_dc_imap_security" ] && { emit_env MAILIAM_DC_IMAP_SECURITY "$_dc_imap_security" || return 1; }
+            [ -n "$_dc_smtp_host" ] && { emit_env MAILIAM_DC_SMTP_HOST "$_dc_smtp_host" || return 1; }
+            [ -n "$_dc_smtp_port" ] && { emit_env MAILIAM_DC_SMTP_PORT "$_dc_smtp_port" || return 1; }
+            [ -n "$_dc_smtp_security" ] && { emit_env MAILIAM_DC_SMTP_SECURITY "$_dc_smtp_security" || return 1; }
+            [ -n "$_dc_ic" ] && { emit_env MAILIAM_DC_IC "$_dc_ic" || return 1; }
+        fi
         if [ -n "${_admin:-}" ] && [ "$_admin" != random ]; then
             printf '\n'
             printf '%s\n' '# Fixed administrator credentials — format: username:password'
