@@ -112,7 +112,7 @@ validate_admin() {
 
 validate_mode() {
     case "$1" in
-        1|2|3) return 0 ;;
+        1|2|3|4) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -534,8 +534,27 @@ prompt_mode() {
     say_opt 1 "$_pm_opt1" "Default - keeps config & mail data safe"
     say_opt 2 "Reconfigure server settings" "Update domain, ports, TLS, or admin"
     say_opt 3 "Fresh reinstall" "Clean install - resets configuration"
-    prompt_choice _install_mode 1 3 "Choice [1-3]"
+    say_opt 4 "Uninstall MailiaM" "Remove binary, service, and optional data"
+    prompt_choice _install_mode 1 4 "Choice [1-4]"
     _update_target="$_pm_latest"
+}
+
+prompt_uninstall_purge() {
+    clear_step
+    say_header "Data removal options:"
+    say_opt 1 "Keep config and mail data" "Default - preserves data & config"
+    say_opt 2 "Purge all data, config, and logs" "Completely remove all MailiaM files"
+    if [ "${_purge:-0}" -eq 1 ]; then
+        _pup_def=2
+    else
+        _pup_def=1
+    fi
+    prompt_choice _purge_choice "$_pup_def" 2 "Choice [1-2]"
+    if [ "$_purge_choice" = 2 ]; then
+        _purge=1
+    else
+        _purge=0
+    fi
 }
 
 prompt_source() {
@@ -828,6 +847,31 @@ print_update_summary() {
     print_hr
 }
 
+print_uninstall_summary() {
+    clear_step
+    print_box_title "                    MailiaM Uninstall Summary"
+    printf '  Binary Path:       %s %s(Removed)%s\n' "$_bin_file" "$CLR_HINT" "$CLR_RESET"
+    case "${_init:-none}" in
+        systemd) _svc_disp="mailiam.service (Stopped & Removed)" ;;
+        sysv) _svc_disp="/etc/init.d/mailiam (Stopped & Removed)" ;;
+        openrc) _svc_disp="mailiam (Stopped & Removed)" ;;
+        freebsd) _svc_disp="/usr/local/etc/rc.d/mailiam (Stopped & Removed)" ;;
+        *) _svc_disp="None" ;;
+    esac
+    printf '  Service Unit:      %s\n' "$_svc_disp"
+    printf '  Service User:      %s %s(Removed)%s\n' "$_account" "$CLR_HINT" "$CLR_RESET"
+    if [ "${_purge:-0}" -eq 1 ]; then
+        _data_disp="${CLR_RED}(Purged)${CLR_RESET}"
+    else
+        _data_disp="${CLR_GREEN}(Preserved)${CLR_RESET}"
+    fi
+    printf '  Config & Env:      %s %s\n' "$_conf_dir" "$_data_disp"
+    printf '  Mail Database:     %s %s\n' "$_data_dir" "$_data_disp"
+    printf '  Log Directory:     %s %s\n' "$_log_dir" "$_data_disp"
+    printf '  Uninstall Log:     /tmp/mailiam-uninstall.log\n'
+    print_hr
+}
+
 print_install_success() {
     if [ -n "${_admin:-}" ] && [ "$_admin" != random ]; then
         _pw_user="${_admin%%:*}"
@@ -873,9 +917,26 @@ print_update_success() {
     print_hr
 }
 
-confirm_or_abort() {
+print_uninstall_success() {
     say ""
-    prompt_yes_no _go Y "$1"
+    print_box_title "                  MailiaM Uninstalled Successfully"
+    say ""
+    printf '  Binary & Services: Removed\n'
+    printf '  Service Account:   %s (removed)\n' "$_account"
+    if [ "${_purge:-0}" -eq 1 ]; then
+        printf '  Mail Data & Conf:  %sPurged%s\n' "$CLR_RED" "$CLR_RESET"
+    else
+        printf '  Mail Data & Conf:  Preserved in %s and %s\n' "$_data_dir" "$_conf_dir"
+    fi
+    printf '  Uninstall Log:     /tmp/mailiam-uninstall.log\n'
+    say ""
+    print_hr
+}
+
+confirm_or_abort() {
+    _coa_def="${2:-Y}"
+    say ""
+    prompt_yes_no _go "$_coa_def" "$1"
     if ! is_yes "$_go"; then
         say "Aborted. No changes were made."
         exit 0
@@ -1250,10 +1311,163 @@ recovery_port() {
     printf '%s\n' 80
 }
 
+log_uninstall() {
+    _lu_ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
+    printf '[%s] %s\n' "$_lu_ts" "$*" >> /tmp/mailiam-uninstall.log
+}
+
+run_uninstall_step() {
+    _rus_idx="$1"
+    _rus_tot="$2"
+    _rus_desc="$3"
+    shift 3
+    printf '  %s[%s/%s]%s %-50s' "$CLR_BLUE" "$_rus_idx" "$_rus_tot" "$CLR_RESET" "$_rus_desc"
+    log_uninstall "Step [$_rus_idx/$_rus_tot]: $_rus_desc"
+    _rus_out=$(mktemp)
+    if "$@" > "$_rus_out" 2>&1; then
+        printf ' %s[OK]%s\n' "$CLR_GREEN" "$CLR_RESET"
+        if [ -s "$_rus_out" ]; then
+            while IFS= read -r _l; do
+                log_uninstall "  output: $_l"
+            done < "$_rus_out"
+        fi
+        log_uninstall "Step [$_rus_idx/$_rus_tot]: SUCCESS"
+        rm -f "$_rus_out"
+        return 0
+    else
+        _rus_rc=$?
+        printf ' %s[FAILED]%s\n' "$CLR_RED" "$CLR_RESET"
+        if [ -s "$_rus_out" ]; then
+            while IFS= read -r _l; do
+                log_uninstall "  error: $_l"
+            done < "$_rus_out"
+        fi
+        log_uninstall "Step [$_rus_idx/$_rus_tot]: FAILED (exit code $_rus_rc)"
+        rm -f "$_rus_out"
+        return "$_rus_rc"
+    fi
+}
+
+uninstall_stop_service() {
+    stop_service
+    if check_cmd pkill; then
+        pkill -x mailiam 2>/dev/null || true
+    elif check_cmd killall; then
+        killall mailiam 2>/dev/null || true
+    fi
+    rm -f /var/run/mailiam.pid /run/mailiam.pid
+}
+
+uninstall_service_unit() {
+    case "${_init:-none}" in
+        systemd)
+            if check_cmd systemctl; then
+                systemctl disable mailiam.service 2>/dev/null || true
+                systemctl stop mailiam.service 2>/dev/null || true
+            fi
+            rm -f /etc/systemd/system/mailiam.service
+            if check_cmd systemctl; then
+                systemctl daemon-reload 2>/dev/null || true
+            fi
+            ;;
+        sysv)
+            if check_cmd update-rc.d; then
+                update-rc.d -f mailiam remove 2>/dev/null || true
+            elif check_cmd chkconfig; then
+                chkconfig mailiam off 2>/dev/null || true
+            fi
+            rm -f /etc/init.d/mailiam
+            ;;
+        openrc)
+            if check_cmd rc-update; then
+                rc-update del mailiam default 2>/dev/null || true
+            fi
+            rm -f /etc/init.d/mailiam
+            ;;
+        freebsd)
+            if check_cmd sysrc; then
+                sysrc -x mailiam_enable 2>/dev/null || true
+            fi
+            rm -f /usr/local/etc/rc.d/mailiam
+            ;;
+    esac
+}
+
+uninstall_executables() {
+    rm -f "$_bin_file" "${_bin_file}.bak"
+    if [ -n "${_bin_legacy:-}" ] && [ -L "$_bin_legacy" ]; then
+        rm -f "$_bin_legacy"
+    fi
+}
+
+uninstall_account() {
+    [ -n "$_account" ] || return 0
+    case "${_os:-linux}" in
+        freebsd)
+            if check_cmd pw; then
+                pw userdel "$_account" 2>/dev/null || true
+            fi
+            ;;
+        *)
+            if check_cmd userdel; then
+                userdel "$_account" 2>/dev/null || true
+            elif check_cmd deluser; then
+                deluser "$_account" 2>/dev/null || true
+            fi
+            ;;
+    esac
+}
+
+uninstall_data() {
+    if [ "${_purge:-0}" -eq 1 ]; then
+        for _dir in "$_conf_dir" "$_data_dir" "$_log_dir"; do
+            case "$_dir" in
+                ""|"/"|"/bin"|"/usr"|"/etc"|"/var"|"/home"|"/root")
+                    log_uninstall "Skipping unsafe purge directory: $_dir"
+                    ;;
+                *)
+                    if [ -d "$_dir" ] || [ -L "$_dir" ]; then
+                        rm -rf "$_dir"
+                        log_uninstall "Purged directory: $_dir"
+                    fi
+                    ;;
+            esac
+        done
+        if [ -n "${_legacy_conf:-}" ] && [ -L "$_legacy_conf" ]; then
+            rm -f "$_legacy_conf"
+        fi
+    else
+        log_uninstall "Preserving config ($_conf_dir), data ($_data_dir), and logs ($_log_dir)"
+    fi
+}
+
+uninstall_mailiam() {
+    say ""
+    say_header "Uninstalling MailiaM..."
+    say ""
+    : > /tmp/mailiam-uninstall.log
+    log_uninstall "=== MailiaM Uninstallation Started ==="
+    log_uninstall "Init: ${_init:-none}, OS: ${_os:-unknown}, Account: ${_account:-none}"
+    log_uninstall "Paths: bin=$_bin_file, conf=$_conf_dir, data=$_data_dir, log=$_log_dir, purge=${_purge:-0}"
+
+    run_uninstall_step 1 5 "Stopping MailiaM service..." uninstall_stop_service
+    run_uninstall_step 2 5 "Removing service configuration (${_init:-none})..." uninstall_service_unit
+    run_uninstall_step 3 5 "Removing binary and executables..." uninstall_executables
+    run_uninstall_step 4 5 "Removing service account (${_account})..." uninstall_account
+    if [ "${_purge:-0}" -eq 1 ]; then
+        run_uninstall_step 5 5 "Purging configuration and database directories..." uninstall_data
+    else
+        run_uninstall_step 5 5 "Preserving configuration and data files..." uninstall_data
+    fi
+
+    log_uninstall "=== MailiaM Uninstallation Completed ==="
+    print_uninstall_success
+}
+
 main() {
     local _os _uname _account=""
     local _prefix=""
-    local _yes=0 _update=0 _no_start=0
+    local _yes=0 _update=0 _no_start=0 _uninstall=0 _purge=0
     local _repo="Rezishon/stalwart" _version="latest" _file=""
     _hostname=""
     _public_url=""
@@ -1292,6 +1506,13 @@ main() {
                 ;;
             -u|--update)
                 _update=1
+                ;;
+            -d|--uninstall)
+                _uninstall=1
+                _install_mode=4
+                ;;
+            --purge)
+                _purge=1
                 ;;
             --no-start)
                 _no_start=1
@@ -1509,7 +1730,9 @@ main() {
 
     _install_mode=0
     _existing_bin=$(detect_installed_bin) || _existing_bin=
-    if [ "$_update" -eq 1 ]; then
+    if [ "$_uninstall" -eq 1 ]; then
+        _install_mode=4
+    elif [ "$_update" -eq 1 ]; then
         _install_mode=1
     elif [ -n "$_existing_bin" ]; then
         if [ "$_yes" -eq 1 ]; then
@@ -1517,6 +1740,16 @@ main() {
         else
             prompt_mode "$_existing_bin"
         fi
+    fi
+
+    if [ "$_install_mode" -eq 4 ]; then
+        if [ "$_interactive" -eq 1 ]; then
+            prompt_uninstall_purge
+            print_uninstall_summary
+            confirm_or_abort "Proceed with uninstallation? [y/N]" N
+        fi
+        uninstall_mailiam
+        return 0
     fi
 
     if [ "$_interactive" -eq 1 ]; then
@@ -1689,6 +1922,8 @@ Install MailiaM into standard FHS paths or under a custom prefix.
 Options:
   -y, --yes, --non-interactive  Non-interactive install using defaults
   -u, --update                  Update binary only
+  -d, --uninstall               Uninstall MailiaM (stops service, removes binary & service unit)
+  --purge                       When uninstallation is performed, also delete configuration, database, and logs
   --repo <repo|url>             GitHub owner/repo or https base URL
   --version <tag>               Release tag (default: latest)
   --file <path>                 Local .tar.gz archive

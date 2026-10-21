@@ -3,8 +3,9 @@
 set -eu
 
 INSTALL_TEST=1
+_install="$(dirname "$0")/../install.sh"
 # shellcheck disable=SC1091
-. "$(dirname "$0")/../install.sh"
+. "$_install"
 
 fail() {
     printf 'FAIL: %s\n' "$*" >&2
@@ -79,7 +80,9 @@ expect_fail validate_admin ":twelvecharsxx"
 expect_ok validate_mode "1"
 expect_ok validate_mode "2"
 expect_ok validate_mode "3"
+expect_ok validate_mode "4"
 expect_fail validate_mode "0"
+expect_fail validate_mode "5"
 expect_ok validate_yes_no "Y"
 expect_ok validate_yes_no "yes"
 expect_ok validate_yes_no "NO"
@@ -225,10 +228,10 @@ _admin=
 rm -f "$_tmp"
 ok write_env_file
 
-sh install.sh --help | grep -q -- '--imap-port' || fail help-imap
+sh "$_install" --help | grep -q -- '--imap-port' || fail help-imap
 
 # no TTY, no -y
-if sh install.sh --prefix /tmp/nope 2>/dev/null; then
+if sh "$_install" --prefix /tmp/nope 2>/dev/null; then
     fail 'piped install without -y should exit'
 fi
 ok tty-guard
@@ -511,12 +514,109 @@ grep -q 'mailiam.env' "$_WORKDIR/hints.out" || fail none-hints-env
 if grep -q 'service mailiam' "$_WORKDIR/hints.out"; then fail none-hints-no-service; fi
 ok print_service_hints-none
 
-# --- CLI (subprocess; never reaches root install) ---
-_install="$(dirname "$0")/../install.sh"
+# --- uninstall helpers ---
+_bin_file=/usr/local/bin/mailiam
+_conf_dir=/etc/mailiam
+_data_dir=/var/lib/mailiam
+_log_dir=/var/log/mailiam
+_account=mailiam
+_init=systemd
+_purge=0
+NO_COLOR=1 init_colors
+print_uninstall_summary > "$_WORKDIR/un_summary_keep.out"
+grep -q 'MailiaM Uninstall Summary' "$_WORKDIR/un_summary_keep.out" || fail un-summary-title
+grep -q 'mailiam.service (Stopped & Removed)' "$_WORKDIR/un_summary_keep.out" || fail un-summary-svc
+grep -q '/etc/mailiam (Preserved)' "$_WORKDIR/un_summary_keep.out" || fail un-summary-keep
+
+_purge=1
+print_uninstall_summary > "$_WORKDIR/un_summary_purge.out"
+grep -q '/etc/mailiam (Purged)' "$_WORKDIR/un_summary_purge.out" || fail un-summary-purge
+
+_purge=0
+print_uninstall_success > "$_WORKDIR/un_succ_keep.out"
+grep -q 'MailiaM Uninstalled Successfully' "$_WORKDIR/un_succ_keep.out" || fail un-succ-title
+grep -q 'Preserved in /var/lib/mailiam and /etc/mailiam' "$_WORKDIR/un_succ_keep.out" || fail un-succ-keep
+
+_purge=1
+print_uninstall_success > "$_WORKDIR/un_succ_purge.out"
+grep -q 'Mail Data & Conf:  Purged' "$_WORKDIR/un_succ_purge.out" || fail un-succ-purge
+
+_log=/tmp/mailiam-uninstall.log
+rm -f "$_log"
+run_uninstall_step 1 5 "Testing step runner..." true > "$_WORKDIR/step.out"
+grep -q '\[1/5\] Testing step runner...' "$_WORKDIR/step.out" || fail step-out
+grep -q '\[OK\]' "$_WORKDIR/step.out" || fail step-ok
+grep -q 'Step \[1/5\]: SUCCESS' "$_log" || fail step-log
+
+run_uninstall_step 2 5 "Testing failing step..." false > "$_WORKDIR/step_fail.out" || true
+grep -q '\[2/5\] Testing failing step...' "$_WORKDIR/step_fail.out" || fail step-fail-out
+grep -q '\[FAILED\]' "$_WORKDIR/step_fail.out" || fail step-failed
+grep -q 'Step \[2/5\]: FAILED' "$_log" || fail step-fail-log
+rm -f "$_log"
+
+_test_conf="$_WORKDIR/test_conf"
+_test_data="$_WORKDIR/test_data"
+_test_log="$_WORKDIR/test_log"
+mkdir -p "$_test_conf" "$_test_data" "$_test_log"
+_conf_dir="$_test_conf"
+_data_dir="$_test_data"
+_log_dir="$_test_log"
+_purge=0
+uninstall_data
+[ -d "$_test_conf" ] && [ -d "$_test_data" ] && [ -d "$_test_log" ] || fail un-data-preserved
+
+_purge=1
+uninstall_data
+[ ! -d "$_test_conf" ] && [ ! -d "$_test_data" ] && [ ! -d "$_test_log" ] || fail un-data-purged
+
+_test_bin="$_WORKDIR/mailiam"
+_test_bak="$_WORKDIR/mailiam.bak"
+_test_compat="$_WORKDIR/mailiam-compat"
+touch "$_test_bin" "$_test_bak"
+ln -s mailiam "$_test_compat"
+_bin_file="$_test_bin"
+_bin_legacy="$_test_compat"
+uninstall_executables
+[ ! -e "$_test_bin" ] && [ ! -e "$_test_bak" ] && [ ! -e "$_test_compat" ] || fail un-exec-removed
+ok uninstall-helpers
+
+# --- CLI flags parsing ---
+_parsed=$(
+    (
+        INSTALL_TEST=1
+        . "$_install"
+        id() { printf '0\n'; }
+        uninstall_mailiam() {
+            printf 'mode=%s uninstall=%s purge=%s\n' "$_install_mode" "$_uninstall" "$_purge"
+        }
+        main -y --uninstall --purge
+    )
+)
+[ "$_parsed" = "mode=4 uninstall=1 purge=1" ] || fail cli-flags-uninstall-purge
+
+_parsed2=$(
+    (
+        INSTALL_TEST=1
+        . "$_install"
+        id() { printf '0\n'; }
+        uninstall_mailiam() {
+            printf 'mode=%s uninstall=%s purge=%s\n' "$_install_mode" "$_uninstall" "$_purge"
+        }
+        main -y -d
+    )
+)
+[ "$_parsed2" = "mode=4 uninstall=1 purge=0" ] || fail cli-flags-d-keep
+ok cli-flags
+
+# --- CLI guards ---
 if sh "$_install" --not-a-flag 2>/dev/null; then fail unknown-flag; fi
 if sh "$_install" --prefix /opt/a /opt/b 2>/dev/null; then fail extra-positional; fi
 if sh "$_install" --repo 2>/dev/null; then fail missing-flag-value; fi
 if sh "$_install" -y --admin short 2>/dev/null; then fail cli-admin-short; fi
+sh "$_install" --help | grep -q -- '--uninstall' || fail help-uninstall
+sh "$_install" --help | grep -q -- '--purge' || fail help-purge
+if sh "$_install" --uninstall-bogus 2>/dev/null; then fail cli-unknown-uninstall-flag; fi
+if sh "$_install" --uninstall 2>/dev/null; then fail cli-uninstall-no-yes; fi
 ok cli-guards
 
 printf 'ALL PASSED\n'
