@@ -441,6 +441,16 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
         == 0
     {
         let use_tls = env_tls();
+        let (imap_name, imap_default, imap_implicit) = if use_tls {
+            ("imaps", 993, true)
+        } else {
+            ("imap", 143, false)
+        };
+        let (pop3_name, pop3_default, pop3_implicit) = if use_tls {
+            ("pop3s", 995, true)
+        } else {
+            ("pop3", 110, false)
+        };
         for (protocol, name, env_key, default, tls_implicit) in [
             (
                 NetworkListenerProtocol::Smtp,
@@ -465,17 +475,17 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
             ),
             (
                 NetworkListenerProtocol::Imap,
-                "imap",
+                imap_name,
                 "MAILIAM_LISTEN_IMAP",
-                143,
-                false,
+                imap_default,
+                imap_implicit,
             ),
             (
                 NetworkListenerProtocol::Pop3,
-                "pop3",
+                pop3_name,
                 "MAILIAM_LISTEN_POP3",
-                110,
-                false,
+                pop3_default,
+                pop3_implicit,
             ),
             (
                 NetworkListenerProtocol::ManageSieve,
@@ -499,12 +509,16 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 false,
             ),
         ] {
-            if tls_implicit && !use_tls {
-                continue;
-            }
             let Some(port) = env_port(env_key, default) else {
                 continue;
             };
+            let tls_implicit = match port {
+                143 | 110 | 587 | 25 | 80 => false,
+                _ => tls_implicit,
+            };
+            if tls_implicit && !use_tls {
+                continue;
+            }
             bp.registry
                 .write(RegistryWrite::insert(
                     &NetworkListener {

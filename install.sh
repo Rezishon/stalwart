@@ -691,8 +691,8 @@ prompt_ports() {
     printf '  - SMTP:         %-6s %s(Mail delivery)%s\n' "$_listen_smtp" "$CLR_HINT" "$CLR_RESET"
     printf '  - SMTPS:        %-6s %s(Client send, TLS)%s\n' "$_listen_submissions" "$CLR_HINT" "$CLR_RESET"
     printf '  - Submission:   %-6s %s(Client send, STARTTLS)%s\n' "$_listen_submission" "$CLR_HINT" "$CLR_RESET"
-    printf '  - IMAP:         %-6s %s(Mail access)%s\n' "$_listen_imap" "$CLR_HINT" "$CLR_RESET"
-    printf '  - POP3:         %-6s %s(Legacy access)%s\n' "$_listen_pop3" "$CLR_HINT" "$CLR_RESET"
+    printf '  - IMAP:         %-6s %s(Mail access, TLS)%s\n' "$_listen_imap" "$CLR_HINT" "$CLR_RESET"
+    printf '  - POP3:         %-6s %s(Legacy access, TLS)%s\n' "$_listen_pop3" "$CLR_HINT" "$CLR_RESET"
     printf '  - ManageSieve:  %-6s %s(Mail filtering)%s\n' "$_listen_sieve" "$CLR_HINT" "$CLR_RESET"
     printf '  - HTTP:         %-6s %s(Web / ACME challenges)%s\n' "$_listen_http" "$CLR_HINT" "$CLR_RESET"
     printf '  - HTTPS:        %-6s %s(Relay SPA / WebUI / JMAP)%s\n' "$_listen_https" "$CLR_HINT" "$CLR_RESET"
@@ -1557,8 +1557,8 @@ main() {
     _listen_smtp=25
     _listen_submission=587
     _listen_submissions=465
-    _listen_imap=143
-    _listen_pop3=110
+    _listen_imap=993
+    _listen_pop3=995
     _listen_sieve=4190
     _listen_https=443
     _listen_http=80
@@ -1979,8 +1979,8 @@ Options:
   --smtp-port <n>               MAILIAM_LISTEN_SMTP (default: 25)
   --submission-port <n>         MAILIAM_LISTEN_SUBMISSION (default: 587)
   --submissions-port <n>        MAILIAM_LISTEN_SUBMISSIONS (default: 465)
-  --imap-port <n>               MAILIAM_LISTEN_IMAP (default: 143)
-  --pop3-port <n>               MAILIAM_LISTEN_POP3 (default: 110)
+  --imap-port <n>               MAILIAM_LISTEN_IMAP (default: 993)
+  --pop3-port <n>               MAILIAM_LISTEN_POP3 (default: 995)
   --sieve-port <n>              MAILIAM_LISTEN_SIEVE (default: 4190)
   --https-port <n>              MAILIAM_LISTEN_HTTPS (default: 443)
   --http-port <n>               MAILIAM_LISTEN_HTTP (default: 80)
