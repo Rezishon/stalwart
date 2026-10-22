@@ -1,7 +1,7 @@
 # DeltaChat Relay Page Admin Submenu & /api/v1/config Specification
 
 - **Date:** 2026-10-23
-- **Status:** Approved (Incorporating UX/Product & Stalwart-Rust Expert Findings)
+- **Status:** Approved (Incorporating Full Stalwart-Rust Core & UX/Product Reviews)
 - **Authors:** RiseLabs / MailiaM Team
 - **Target Components:** `crates/registry`, `crates/deltachat`, `resources/schema/schema.json.gz`, `signup-relay/frontend`
 
@@ -72,7 +72,24 @@ Currently:
 
 ## 3. Architecture & Data Structures
 
-### 3.1. Registry Structs (`crates/registry/src/schema/structs.rs`)
+### 3.1. Entity Chain Step 1: `Property` Enum (`crates/registry/src/schema/properties.rs` & `properties_impl.rs`)
+Add required property variants and bump `Property::COUNT`:
+- `PlatformNameEn`
+- `PlatformNameFa`
+- `PlatformIcon`
+- `PlatformImageUrl`
+- `AdminContacts`
+- `DonationLinks`
+- `DownloadLinks`
+- `TitleFa`
+- `Link`
+- `Icon`
+- `ImageUrl`
+- `IsDirect`
+- Bump `COUNT` in `Property`.
+- Register string mappings in `hashify::tiny_map!` in `properties_impl.rs`.
+
+### 3.2. Registry Structs (`crates/registry/src/schema/structs.rs`)
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,8 +133,9 @@ Both structs implement:
 - `Default`: empty strings, `is_direct: false`.
 - `Pickle`: sequential field pickling.
 - `IntoValue`: conversion to `JmapValue`.
+- `RegistryJsonPropertyPatch`: required by `List<T>` for JMAP JSON pointer updates.
 
-### 3.2. Extended `DeltaChat` Struct (`crates/registry/src/schema/structs.rs`)
+### 3.3. Extended `DeltaChat` Struct (`crates/registry/src/schema/structs.rs`)
 
 ```rust
 pub struct DeltaChat {
@@ -139,7 +157,7 @@ pub struct DeltaChat {
 }
 ```
 
-### 3.3. Pickle Versioning & Backward Compatibility (`crates/registry/src/schema/structs_impl.rs`)
+### 3.4. Pickle Versioning & Backward Compatibility (`crates/registry/src/schema/structs_impl.rs`)
 
 - Version bump: `const VERSION: u8 = 5;`
 - In `DeltaChat::default()`: populate the 6 official download links with IDs, en/fa titles, and icons.
@@ -155,13 +173,20 @@ pub struct DeltaChat {
       this.download_links = Pickle::unpickle(stream)?;
   }
   ```
-- Update `IntoValue for DeltaChat` and `RegistryJsonPropertyPatch for DeltaChat` to include all 7 new properties for JMAP get/set and WebUI forms.
+- `IntoValue for DeltaChat`: Bump map capacity from 22 to 29, inserting all 7 new properties.
+- `RegistryJsonPropertyPatch for DeltaChat`: Add match arms for the new fields.
 
-### 3.4. Validation Rules (`DeltaChat::validate`)
+### 3.5. Validation Rules (`DeltaChat::validate`)
 
 - `platform_name_en`, `platform_name_fa`: max length 64 characters.
 - `platform_icon`, `platform_image_url`: max length 512 characters.
-- `admin_contacts`, `donation_links`, `download_links`: max 20 entries each; each item `id` max 64 characters, `title`/`title_fa` max 128 characters, `link` max 1024 characters.
+- `admin_contacts`, `donation_links`, `download_links`: max 20 entries each.
+- Item validation:
+  - `id`: max 64 characters.
+  - `title`, `title_fa`: max 128 characters.
+  - `icon`: max 128 characters.
+  - `image_url`: max 1024 characters.
+  - `link`: max 1024 characters; must start with allowed schemes: `https://`, `http://`, `mailto:`, `tg:`, `matrix:`, `bitcoin:`, `monero:`, or `/` (relative path). Rejects `javascript:` and data URIs.
 
 ---
 
@@ -348,12 +373,16 @@ Add `Relay Page` under `Settings -> DeltaChat`:
 ```
 
 ### 5.3. Sub-Object Schemas & Forms
-- `x:DeltaChatLink`:
-  - `fields`: `id` (string), `title` (string), `titleFa` (string), `link` (string), `icon` (string), `imageUrl` (string).
-  - `forms`: Section "Link Item" with ID, English Title, Persian Title, URL, Icon, Image URL inputs.
-- `x:DeltaChatDownloadLink`:
-  - `fields`: `id` (string), `title` (string), `titleFa` (string), `link` (string), `isDirect` (boolean), `icon` (string), `imageUrl` (string).
-  - `forms`: Section "Download Item" with ID, English Title, Persian Title, URL, Direct Download toggle, Icon, Image URL inputs.
+- `schemas`: Add `x:DeltaChatLink` and `x:DeltaChatDownloadLink` (`"type": "single"`). (Do not add to `objects` list since they are sub-objects).
+- `fields`:
+  - `x:DeltaChatLink`: `id` (string), `title` (string), `titleFa` (string), `link` (string), `icon` (string), `imageUrl` (string).
+  - `x:DeltaChatDownloadLink`: `id` (string), `title` (string), `titleFa` (string), `link` (string), `isDirect` (boolean), `icon` (string), `imageUrl` (string).
+  - `x:DeltaChat`:
+    - `adminContacts`: `{ "type": { "type": "objectList", "objectName": "x:DeltaChatLink" }, "update": "mutable" }`
+    - `donationLinks`: `{ "type": { "type": "objectList", "objectName": "x:DeltaChatLink" }, "update": "mutable" }`
+    - `downloadLinks`: `{ "type": { "type": "objectList", "objectName": "x:DeltaChatDownloadLink" }, "update": "mutable" }`
+    - `defaults.downloadLinks`: Seed with default map matching Rust defaults to avoid dirty form state.
+- `forms`: Section "Link Item" and "Download Item" modals for editing rows.
 
 ### 5.4. Field Guidance Updates for `x:DeltaChat/DeltaChatEndpoints`
 - Update `imapSecurity`:
@@ -438,7 +467,7 @@ export interface ServerConfig {
 1. **Pickle Serialization Tests (`crates/registry`):**
    - Test v4 blob unpickling into v5 struct.
    - Test v5 full struct pickling and unpickling roundtrip.
-   - Test validation of max length and array bounds.
+   - Test validation of max length, URI scheme check, and array bounds.
 2. **DeltaChat Handler Tests (`crates/deltachat`):**
    - Unit test `handle_config` ensuring all new fields are populated and serialized to JSON.
    - Assert `platform_name`, `admin_contacts`, `donation_links`, `download_links` serialize with correct keys.
