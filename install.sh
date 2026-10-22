@@ -76,20 +76,69 @@ validate_hostname() {
     return 0
 }
 
-validate_email() {
-    [ -n "$1" ] || return 1
-    contains_cr_lf_or_quote "$1" && return 1
+strip_url_scheme() {
     case "$1" in
-        *@*.*) return 0 ;;
-        *) return 1 ;;
+        https://*) printf '%s\n' "${1#https://}" ;;
+        http://*)  printf '%s\n' "${1#http://}" ;;
+        *)         printf '%s\n' "$1" ;;
     esac
 }
 
-validate_public_url() {
-    case "$1" in
-        https://?*|http://?*) return 0 ;;
-        *) return 1 ;;
+normalize_public_url() { # var
+    eval "_npu_val=\"\$$1\""
+    while :; do
+        case "$_npu_val" in
+            */) _npu_val="${_npu_val%/}" ;;
+            *) break ;;
+        esac
+    done
+    case "$_npu_val" in
+        https://*|http://*) ;;
+        *)
+            if [ "$_tls" = false ] || [ "$_tls" = 0 ]; then
+                _npu_val="http://${_npu_val}"
+            else
+                _npu_val="https://${_npu_val}"
+            fi
+            ;;
     esac
+    eval "$1=\"\$_npu_val\""
+}
+
+validate_public_url() {
+    [ -n "$1" ] || return 1
+    contains_cr_lf_or_quote "$1" && return 1
+    case "$1" in
+        *[[:space:]]*) return 1 ;;
+    esac
+    _vpu_host="$1"
+    case "$_vpu_host" in
+        https://?*) _vpu_host="${_vpu_host#https://}" ;;
+        http://?*)  _vpu_host="${_vpu_host#http://}" ;;
+        *://*)      return 1 ;;
+    esac
+    while :; do
+        case "$_vpu_host" in
+            */) _vpu_host="${_vpu_host%/}" ;;
+            *) break ;;
+        esac
+    done
+    [ -n "$_vpu_host" ] || return 1
+    case "$_vpu_host" in
+        */*) return 1 ;;
+    esac
+    case "$_vpu_host" in
+        *:*)
+            _vpu_h="${_vpu_host%:*}"
+            _vpu_p="${_vpu_host##*:}"
+            validate_hostname "$_vpu_h" || return 1
+            validate_port "$_vpu_p" || return 1
+            ;;
+        *)
+            validate_hostname "$_vpu_host" || return 1
+            ;;
+    esac
+    return 0
 }
 
 validate_admin() {
@@ -536,7 +585,7 @@ prompt_mode() {
     say ""
     say_header "Select action:"
     say_opt 1 "$_pm_opt1" "Default - keeps config & mail data safe"
-    say_opt 2 "Reconfigure server settings" "Update domain, ports, TLS, or admin"
+    say_opt 2 "Reconfigure server settings" "Update web URL or admin"
     say_opt 3 "Fresh reinstall" "Clean install - resets configuration"
     say_opt 4 "Uninstall MailiaM" "Remove binary, service, and optional data"
     prompt_choice _install_mode 1 4 "Choice [1-4]"
@@ -673,43 +722,13 @@ prompt_ports() {
     fi
 }
 
-prompt_tls() {
-    clear_step
-    say_header "TLS / SSL encryption:"
-    say_opt 1 "Automatic Let's Encrypt (ACME)" "Default"
-    say_opt 2 "Custom certificate files" "Path to .crt and .key"
-    say_opt 3 "Disabled / Plaintext" "Only if behind reverse proxy"
-    prompt_choice _tls_choice 1 3 "Choice [1-3]"
-    case "$_tls_choice" in
-        1)
-            _tls=true
-            _tls_mode="Automatic Let's Encrypt (ACME)"
-            clear_step
-            prompt_value _acme_email "admin@${_hostname}" validate_email \
-                "Invalid email." "ACME contact email"
-            ;;
-        2)
-            _tls=true
-            _tls_mode="Custom certificate files"
-            clear_step
-            prompt_value _tls_cert /etc/ssl/certs/fullchain.pem validate_prefix \
-                "Invalid path." "TLS certificate path"
-            clear_step
-            prompt_value _tls_key /etc/ssl/private/privkey.pem validate_prefix \
-                "Invalid path." "TLS private key path"
-            ;;
-        3)
-            _tls=false
-            _tls_mode="Disabled / Plaintext"
-            ;;
-    esac
-}
-
 prompt_public_url_step() {
     set_public_url_default
+    _url_def="$(strip_url_scheme "$_public_url")"
     clear_step
-    prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
-        "Public web URL (/admin, /account, DeltaChat)"
+    prompt_value _public_url "$_url_def" validate_public_url "Invalid domain or URL." \
+        "Public web domain (/admin, /account, DeltaChat)"
+    normalize_public_url _public_url
 }
 
 print_box_title() {
@@ -742,8 +761,6 @@ print_install_summary() {
     printf '    - ManageSieve:   Port %s\n' "$_listen_sieve"
     printf '    - Web (HTTP):    Port %s\n' "$_listen_http"
     printf '    - Web (HTTPS):   Port %s\n' "$_listen_https"
-    say ""
-    printf '  %sTLS / SSL:%s         %s\n' "$CLR_BOLD" "$CLR_RESET" "${_tls_mode:-$_tls}"
     say ""
     if [ "$_admin" = random ] || [ -z "${_admin:-}" ]; then
         printf '  %sAdmin Account:%s     admin (password generated next)\n' \
@@ -1056,6 +1073,7 @@ seed_mode2_from_env() {
         _v="$(read_env_key_mail "$_env_file" MAILIAM_PUBLIC_URL STALWART_PUBLIC_URL)" || _v=
         if [ -n "$_v" ] && validate_public_url "$_v"; then
             _public_url="$_v"
+            normalize_public_url _public_url
         else
             _public_url=
             _v="$(read_env_key_mail "$_env_file" MAILIAM_LISTEN_HTTPS STALWART_LISTEN_HTTPS)" || _v=
@@ -1545,10 +1563,6 @@ main() {
     _listen_https=443
     _listen_http=80
     _tls=true
-    _tls_mode="Automatic Let's Encrypt (ACME)"
-    _acme_email=
-    _tls_cert=
-    _tls_key=
     _dc_imap_host=""
     _dc_imap_port=""
     _dc_imap_security=""
@@ -1630,6 +1644,7 @@ main() {
                     err "Invalid public URL: $2"
                 fi
                 _public_url="$2"
+                normalize_public_url _public_url
                 shift
                 ;;
             --admin)
@@ -1866,7 +1881,6 @@ main() {
             prompt_value _account "$_account" validate_user "Invalid user." \
                 "MailiaM user account"
             prompt_ports
-            prompt_tls
             prompt_public_url_step
             prompt_admin
             if [ "$_no_start" -eq 0 ]; then
@@ -1885,6 +1899,7 @@ main() {
         fi
     else
         set_public_url_default
+        normalize_public_url _public_url
         if [ "$_no_start" -eq 1 ]; then
             _SKIP_START=1
         else

@@ -61,14 +61,15 @@ expect_ok validate_hostname "mail.example.org"
 expect_ok validate_hostname "192.168.1.8"
 expect_fail validate_hostname "-bad"
 expect_fail validate_hostname "has space"
-expect_ok validate_email "admin@mail.example.org"
-expect_fail validate_email "admin"
-expect_fail validate_email "admin@localhost"
 
 expect_ok validate_public_url "https://mail.example.org"
 expect_ok validate_public_url "http://192.168.1.8:8080"
-expect_fail validate_public_url "mail.example.org"
+expect_ok validate_public_url "mail.example.org"
+expect_ok validate_public_url "mail.example.org:8443"
+expect_ok validate_public_url "192.168.1.8"
 expect_fail validate_public_url "ftp://x"
+expect_fail validate_public_url "mail.example.org/path"
+expect_fail validate_public_url ""
 
 expect_ok validate_admin "random"
 expect_ok validate_admin "admin:twelvecharss"
@@ -400,6 +401,24 @@ _listen_http=8080
 set_public_url_default
 [ "$_public_url" = 'http://mail.example.com:8080' ] || fail url-http-custom
 ok set_public_url_default
+
+[ "$(strip_url_scheme 'https://mail.example.org')" = 'mail.example.org' ] || fail strip-https
+[ "$(strip_url_scheme 'http://mail.example.org:8080')" = 'mail.example.org:8080' ] || fail strip-http
+[ "$(strip_url_scheme 'mail.example.org')" = 'mail.example.org' ] || fail strip-none
+
+_norm_u='mail.example.org'
+_tls=true
+normalize_public_url _norm_u
+[ "$_norm_u" = 'https://mail.example.org' ] || fail norm-tls
+_norm_u='mail.example.org:8080'
+_tls=false
+normalize_public_url _norm_u
+[ "$_norm_u" = 'http://mail.example.org:8080' ] || fail norm-plain
+_norm_u='https://mail.example.org/'
+_tls=true
+normalize_public_url _norm_u
+[ "$_norm_u" = 'https://mail.example.org' ] || fail norm-slash
+ok normalize_public_url
 
 _hostname=mail.example.com
 _tls=true
