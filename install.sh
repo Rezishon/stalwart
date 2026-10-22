@@ -1283,11 +1283,24 @@ run_step() {
     _rs_tot="$2"
     _rs_desc="$3"
     shift 3
-    printf '  %s[%s/%s]%s %-50s' "$CLR_BLUE" "$_rs_idx" "$_rs_tot" "$CLR_RESET" "$_rs_desc"
+    _rs_prog=0
+    if [ "$1" = "step_install_binary" ] && [ -z "${_file:-}" ] && [ -t 2 ]; then
+        _rs_prog=1
+        printf '  %s[%s/%s]%s %s\n' "$CLR_BLUE" "$_rs_idx" "$_rs_tot" "$CLR_RESET" "$_rs_desc"
+    else
+        printf '  %s[%s/%s]%s %-50s' "$CLR_BLUE" "$_rs_idx" "$_rs_tot" "$CLR_RESET" "$_rs_desc"
+    fi
     log_step "Step [$_rs_idx/$_rs_tot]: $_rs_desc"
     _rs_out=$(mktemp)
-    if "$@" > "$_rs_out" 2>&1; then
-        printf ' %s[OK]%s\n' "$CLR_GREEN" "$CLR_RESET"
+    if [ "$_rs_prog" -eq 1 ]; then
+        "$@" > "$_rs_out"
+        _rs_rc=$?
+    else
+        "$@" > "$_rs_out" 2>&1
+        _rs_rc=$?
+    fi
+    if [ "$_rs_rc" -eq 0 ]; then
+        [ "$_rs_prog" -eq 0 ] && printf ' %s[OK]%s\n' "$CLR_GREEN" "$CLR_RESET"
         if [ -s "$_rs_out" ]; then
             while IFS= read -r _l; do
                 log_step "  output: $_l"
@@ -1297,8 +1310,8 @@ run_step() {
         rm -f "$_rs_out"
         return 0
     else
-        _rs_rc=$?
         _step_failures=$((_step_failures + 1))
+        [ "$_rs_prog" -eq 1 ] && printf '  '
         printf ' %s[FAILED]%s\n' "$CLR_RED" "$CLR_RESET"
         if [ -s "$_rs_out" ]; then
             while IFS= read -r _l; do
@@ -2685,7 +2698,11 @@ downloader() {
         return $_status
     elif [ "$_dld" = wget ]; then
         if [ -t 2 ]; then
-            _wget_ui=
+            if check_help_for "$3" wget --show-progress; then
+                _wget_ui='-q --show-progress'
+            else
+                _wget_ui=
+            fi
         else
             _wget_ui='-q'
         fi

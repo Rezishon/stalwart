@@ -579,6 +579,13 @@ grep -q '\[1/6\] Setting up service account (mailiam)...' "$_WORKDIR/step_uni.ou
 grep -q '\[OK\]' "$_WORKDIR/step_uni.out" || fail step-uni-ok
 [ "$_step_failures" -eq 0 ] || fail step-uni-failures-zero
 
+# run_step binary progress mode with file fallback
+_file="/tmp/dummy.tar.gz"
+run_step 3 6 "Installing binary..." true > "$_WORKDIR/step_uni_file.out"
+grep -q '\[3/6\] Installing binary...' "$_WORKDIR/step_uni_file.out" || fail step-uni-file-desc
+grep -q '\[OK\]' "$_WORKDIR/step_uni_file.out" || fail step-uni-file-ok
+_file=""
+
 run_step 2 6 "Testing failing step..." false > "$_WORKDIR/step_uni_fail.out" || true
 grep -q '\[2/6\] Testing failing step...' "$_WORKDIR/step_uni_fail.out" || fail step-uni-fail-desc
 grep -q '\[FAILED\]' "$_WORKDIR/step_uni_fail.out" || fail step-uni-fail-tag
