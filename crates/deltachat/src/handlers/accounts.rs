@@ -15,6 +15,7 @@ use common::Server;
 use common::cache::invalidate::CacheInvalidationBuilder;
 use registry::schema::prelude::Object;
 use registry::schema::structs::{Account, Credential, PasswordCredential, UserAccount, UserRoles};
+use registry::types::datetime::UTCDateTime;
 use registry::types::list::List;
 use std::sync::Arc;
 use store::registry::write::{RegistryWrite, RegistryWriteResult};
@@ -233,55 +234,20 @@ pub async fn handle_instant_account(
         domain_name,
     )?;
     let username = req.username.trim().to_ascii_lowercase();
+    let email = format!("{username}@{domain_name}");
 
-    if server
-        .account_id_from_parts(&username, domain.id)
-        .await
-        .map_err(|e| DeltaChatError::Internal(e.to_string()))?
-        .is_some()
-    {
-        return Err(DeltaChatError::AccountAlreadyExists);
-    }
-
-    let account = Account::User(UserAccount {
-        name: username.clone(),
-        domain_id: Id::from(domain.id),
-        roles: UserRoles::User,
-        credentials: List::from_iter([Credential::Password(PasswordCredential {
-            credential_id: 0u64.into(),
-            secret: req.password_hash.clone(),
-            ..Default::default()
-        })]),
-        description: "DeltaChat Instant Account".to_string().into(),
-        ..Default::default()
-    });
-
-    let object: Object = account.into();
-    let write_result = server
-        .registry()
-        .write(RegistryWrite::insert(&object))
-        .await
-        .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
-
-    let account_id = match write_result {
-        RegistryWriteResult::Success(id) => {
-            let mut invalidator = CacheInvalidationBuilder::default();
-            invalidator.process_create(&object);
-            server
-                .invalidate_caches(invalidator)
-                .await
-                .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
-            format!("acc_{id}")
-        }
-        RegistryWriteResult::PrimaryKeyConflict { .. } => {
-            return Err(DeltaChatError::AccountAlreadyExists);
-        }
-        other => return Err(DeltaChatError::Internal(other.to_string())),
-    };
+    let account_id = create_user_account(
+        server,
+        username,
+        &domain,
+        req.password_hash,
+        "DeltaChat Instant Account",
+    )
+    .await?;
 
     Ok(InstantAccountResponse {
         account_id,
-        email: format!("{username}@{domain_name}"),
+        email,
         account_type: "instant".to_string(),
         expires_at: None,
     })
@@ -327,26 +293,44 @@ pub async fn handle_custom_account(
     )?;
 
     let username = req.username.trim().to_ascii_lowercase();
+    let email = format!("{username}@{domain_name}");
 
-    if server
-        .account_id_from_parts(&username, domain.id)
-        .await
-        .map_err(|e| DeltaChatError::Internal(e.to_string()))?
-        .is_some()
-    {
-        return Err(DeltaChatError::AccountAlreadyExists);
-    }
+    let account_id = create_user_account(
+        server,
+        username,
+        &domain,
+        req.password_hash,
+        "DeltaChat Custom Account",
+    )
+    .await?;
 
+    Ok(CustomAccountResponse {
+        account_id,
+        email,
+        account_type: "custom".to_string(),
+    })
+}
+
+async fn create_user_account(
+    server: &Server,
+    username: String,
+    domain: &common::auth::DomainCache,
+    password_hash: String,
+    description: &'static str,
+) -> Result<String, DeltaChatError> {
+    let username_for_cache = username.clone();
     let account = Account::User(UserAccount {
-        name: username.clone(),
+        name: username,
         domain_id: Id::from(domain.id),
+        member_tenant_id: domain.id_tenant.map(Id::from),
+        created_at: UTCDateTime::now(),
         roles: UserRoles::User,
         credentials: List::from_iter([Credential::Password(PasswordCredential {
             credential_id: 0u64.into(),
-            secret: req.password_hash.clone(),
+            secret: password_hash,
             ..Default::default()
         })]),
-        description: "DeltaChat Custom Account".to_string().into(),
+        description: Some(description.to_string()),
         ..Default::default()
     });
 
@@ -355,9 +339,15 @@ pub async fn handle_custom_account(
         .registry()
         .write(RegistryWrite::insert(&object))
         .await
-        .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
+        .map_err(|e| {
+            if e.is_assertion_failure() {
+                DeltaChatError::AccountAlreadyExists
+            } else {
+                DeltaChatError::Internal(e.to_string())
+            }
+        })?;
 
-    let account_id = match write_result {
+    match write_result {
         RegistryWriteResult::Success(id) => {
             let mut invalidator = CacheInvalidationBuilder::default();
             invalidator.process_create(&object);
@@ -365,19 +355,14 @@ pub async fn handle_custom_account(
                 .invalidate_caches(invalidator)
                 .await
                 .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
-            format!("acc_{id}")
+            server.invalidate_local_negative_account_cache(&username_for_cache, domain.id);
+            Ok(format!("acc_{id}"))
         }
         RegistryWriteResult::PrimaryKeyConflict { .. } => {
-            return Err(DeltaChatError::AccountAlreadyExists);
+            Err(DeltaChatError::AccountAlreadyExists)
         }
-        other => return Err(DeltaChatError::Internal(other.to_string())),
-    };
-
-    Ok(CustomAccountResponse {
-        account_id,
-        email: format!("{username}@{domain_name}"),
-        account_type: "custom".to_string(),
-    })
+        other => Err(DeltaChatError::Internal(other.to_string())),
+    }
 }
 
 #[cfg(test)]
