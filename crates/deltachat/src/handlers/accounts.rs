@@ -5,13 +5,15 @@
  */
 
 use crate::altcha::AltchaEngine;
-use crate::config::{endpoints_from_settings, fill_empty_endpoint_hosts, DeltaChatSettings};
+use crate::config::{DeltaChatSettings, endpoints_from_settings, fill_empty_endpoint_hosts};
 use crate::error::DeltaChatError;
 use crate::models::{
     CustomAccountRequest, CustomAccountResponse, InstantAccountRequest, InstantAccountResponse,
 };
 use crate::password_hash::password_hash_matches;
 use common::Server;
+use common::cache::invalidate::CacheInvalidationBuilder;
+use registry::schema::prelude::Object;
 use registry::schema::structs::{Account, Credential, PasswordCredential, UserAccount, UserRoles};
 use registry::types::list::List;
 use std::sync::Arc;
@@ -120,7 +122,10 @@ pub fn validate_instant_username(
     if settings.instant_prefix_enabled {
         let prefix = settings.instant_prefix.to_ascii_lowercase();
         let ok = u.strip_prefix(&prefix).is_some_and(|suffix| {
-            suffix.len() == 12 && suffix.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            suffix.len() == 12
+                && suffix
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
         });
         if !ok {
             return Err(DeltaChatError::InvalidUsername(format!(
@@ -222,7 +227,11 @@ pub async fn handle_instant_account(
         .names
         .first()
         .ok_or_else(|| DeltaChatError::InvalidDomain("Domain has no name".into()))?;
-    require_advertised_hosts(settings, &server.core.email.default_domain_name, domain_name)?;
+    require_advertised_hosts(
+        settings,
+        &server.core.email.default_domain_name,
+        domain_name,
+    )?;
     let username = req.username.trim().to_ascii_lowercase();
 
     if server
@@ -247,14 +256,23 @@ pub async fn handle_instant_account(
         ..Default::default()
     });
 
+    let object: Object = account.into();
     let write_result = server
         .registry()
-        .write(RegistryWrite::insert(&account.into()))
+        .write(RegistryWrite::insert(&object))
         .await
         .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
 
     let account_id = match write_result {
-        RegistryWriteResult::Success(id) => format!("acc_{id}"),
+        RegistryWriteResult::Success(id) => {
+            let mut invalidator = CacheInvalidationBuilder::default();
+            invalidator.process_create(&object);
+            server
+                .invalidate_caches(invalidator)
+                .await
+                .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
+            format!("acc_{id}")
+        }
         RegistryWriteResult::PrimaryKeyConflict { .. } => {
             return Err(DeltaChatError::AccountAlreadyExists);
         }
@@ -302,7 +320,11 @@ pub async fn handle_custom_account(
         .names
         .first()
         .ok_or_else(|| DeltaChatError::InvalidDomain("Domain has no name".into()))?;
-    require_advertised_hosts(settings, &server.core.email.default_domain_name, domain_name)?;
+    require_advertised_hosts(
+        settings,
+        &server.core.email.default_domain_name,
+        domain_name,
+    )?;
 
     let username = req.username.trim().to_ascii_lowercase();
 
@@ -328,14 +350,23 @@ pub async fn handle_custom_account(
         ..Default::default()
     });
 
+    let object: Object = account.into();
     let write_result = server
         .registry()
-        .write(RegistryWrite::insert(&account.into()))
+        .write(RegistryWrite::insert(&object))
         .await
         .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
 
     let account_id = match write_result {
-        RegistryWriteResult::Success(id) => format!("acc_{id}"),
+        RegistryWriteResult::Success(id) => {
+            let mut invalidator = CacheInvalidationBuilder::default();
+            invalidator.process_create(&object);
+            server
+                .invalidate_caches(invalidator)
+                .await
+                .map_err(|e| DeltaChatError::Internal(e.to_string()))?;
+            format!("acc_{id}")
+        }
         RegistryWriteResult::PrimaryKeyConflict { .. } => {
             return Err(DeltaChatError::AccountAlreadyExists);
         }
@@ -449,7 +480,8 @@ mod tests {
 
     #[test]
     fn plaintext_password_field_is_rejected_by_model() {
-        let json = r#"{"username":"dc_0123456789ab","password":"secret","password_hash":"$argon2id$x"}"#;
+        let json =
+            r#"{"username":"dc_0123456789ab","password":"secret","password_hash":"$argon2id$x"}"#;
         let req: InstantAccountRequest = serde_json::from_str(json).unwrap();
         assert!(req.password.is_some());
     }
