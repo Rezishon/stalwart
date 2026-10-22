@@ -2104,8 +2104,8 @@ After=network-online.target
 [Service]
 Type=simple
 LimitNOFILE=65536
-KillMode=process
 KillSignal=SIGINT
+TimeoutStopSec=30
 Restart=on-failure
 RestartSec=5
 EnvironmentFile=-${_env}
@@ -2166,10 +2166,39 @@ export RUN_AS_GROUP=${_user}
 
 ulimit -n \$ULIMIT_NOFILE
 
+is_alive() {
+    [ -n "\$1" ] || return 1
+    if [ -d "/proc" ]; then
+        [ -d "/proc/\$1" ] || return 1
+        grep -q '^State:[[:space:]]*Z' "/proc/\$1/status" 2>/dev/null && return 1
+        return 0
+    fi
+    case "\$(ps -o stat= -p "\$1" 2>/dev/null || ps -o state= -p "\$1" 2>/dev/null)" in
+        Z*|"") return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+clean_pidfile() {
+    if [ -s "\$PIDFILE" ]; then
+        _p=
+        read _p < "\$PIDFILE" || true
+        if ! is_alive "\$_p"; then
+            rm -f "\$PIDFILE"
+        fi
+    fi
+}
+
 do_start()
 {
-    start-stop-daemon --start --quiet --pidfile \$PIDFILE --exec \$DAEMON --test > /dev/null \\
-        || return 1
+    clean_pidfile
+    if [ -s "\$PIDFILE" ]; then
+        read _p < "\$PIDFILE" || true
+        if is_alive "\$_p"; then
+            return 1
+        fi
+        rm -f "\$PIDFILE"
+    fi
     start-stop-daemon --start --quiet --pidfile \$PIDFILE --exec \$DAEMON \\
         --background --make-pidfile --output "\$LOG_FILE" \\
         -- \$DAEMON_ARGS \\
@@ -2178,13 +2207,32 @@ do_start()
 
 do_stop()
 {
-    start-stop-daemon --stop --quiet --retry=INT/30/KILL/5 --pidfile \$PIDFILE --name mailiam
-    RETVAL="\$?"
-    [ "\$RETVAL" = 2 ] && return 2
-    start-stop-daemon --stop --quiet --oknodo --retry=0/30/KILL/5 --exec \$DAEMON
-    [ "\$?" = 2 ] && return 2
-    rm -f \$PIDFILE
-    return "\$RETVAL"
+    clean_pidfile
+    [ -s "\$PIDFILE" ] || return 0
+    read _p < "\$PIDFILE" || true
+    [ -n "\$_p" ] || { rm -f "\$PIDFILE"; return 0; }
+
+    # Send SIGINT for graceful shutdown
+    kill -INT "\$_p" 2>/dev/null || true
+
+    _waited=0
+    while [ "\$_waited" -lt 30 ]; do
+        if ! is_alive "\$_p"; then
+            rm -f "\$PIDFILE"
+            return 0
+        fi
+        sleep 1
+        _waited=\$((_waited + 1))
+    done
+
+    # Force kill if still running after 30s
+    kill -KILL "\$_p" 2>/dev/null || true
+    sleep 1
+    rm -f "\$PIDFILE"
+    if ! is_alive "\$_p"; then
+        return 0
+    fi
+    return 2
 }
 
 case "\$1" in
@@ -2193,25 +2241,26 @@ case "\$1" in
     do_start
     case "\$?" in
         0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
-        2)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
+        *)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
     esac
     ;;
   stop)
     [ "\$VERBOSE" != no ] && log_daemon_msg "Stopping MailiaM Server" "mailiam"
     do_stop
     case "\$?" in
-        0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
-        2)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
+        0)   [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
+        *)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
     esac
     ;;
   status)
+    clean_pidfile
     status_of_proc "\$DAEMON" "mailiam" && exit 0 || exit \$?
     ;;
   restart)
     log_daemon_msg "Restarting MailiaM Server" "mailiam"
     do_stop
     case "\$?" in
-      0|1)
+      0)
         do_start
         case "\$?" in
             0) log_end_msg 0 ;;
@@ -2256,7 +2305,25 @@ depend() {
     need net
 }
 
+_clean_stale_pid() {
+    if [ -s "\$pidfile" ]; then
+        read -r _pid < "\$pidfile" || true
+        if [ -n "\$_pid" ]; then
+            if [ -d "/proc" ]; then
+                if [ ! -d "/proc/\$_pid" ] || grep -q '^State:[[:space:]]*Z' "/proc/\$_pid/status" 2>/dev/null; then
+                    rm -f "\$pidfile"
+                fi
+            else
+                case "\$(ps -o stat= -p "\$_pid" 2>/dev/null || ps -o state= -p "\$_pid" 2>/dev/null)" in
+                    Z*|"") rm -f "\$pidfile" ;;
+                esac
+            fi
+        fi
+    fi
+}
+
 start_pre() {
+    _clean_stale_pid
     if [ -r "${_env}" ]; then
         set -a
         . "${_env}"
@@ -2265,6 +2332,10 @@ start_pre() {
     export RUN_AS_USER=${_user}
     export RUN_AS_GROUP=${_user}
     ulimit -n 65536
+}
+
+stop_pre() {
+    _clean_stale_pid
 }
 EOF
     chmod +x /etc/init.d/mailiam
@@ -2306,6 +2377,7 @@ command="/usr/sbin/daemon"
 command_args="-f -o \${mailiam_logfile} -p \${pidfile} ${_bin} --config=\${mailiam_config}"
 sig_stop="INT"
 start_precmd="mailiam_precmd"
+restart_cmd="mailiam_restart"
 
 mailiam_precmd()
 {
@@ -2321,6 +2393,22 @@ mailiam_precmd()
     export RUN_AS_GROUP="\${mailiam_runas_group}"
 
     ulimit -n "\${mailiam_fdlimit}"
+
+    # Clean up stale/zombie pidfile
+    if [ -s "\${pidfile}" ]; then
+        read _pid < "\${pidfile}" || true
+        if [ -n "\${_pid}" ]; then
+            case "\$(ps -o state= -p "\${_pid}" 2>/dev/null || ps -o stat= -p "\${_pid}" 2>/dev/null)" in
+                Z*|"") rm -f "\${pidfile}" ;;
+            esac
+        fi
+    fi
+}
+
+mailiam_restart()
+{
+    run_rc_command stop || true
+    run_rc_command start
 }
 
 run_rc_command "\$1"
