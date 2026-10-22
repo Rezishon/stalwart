@@ -103,11 +103,11 @@ mod tests {
 
     #[test]
     fn test_hashed_js_and_css_bundles() {
-        let js = get_web_asset("/assets/main-D6MKEcMq.js").expect("main js");
+        let js = get_web_asset("/assets/main-BhZJYHOT.js").expect("main js");
         assert!(js.content_type.contains("javascript"));
         assert_eq!(js.cache_control, IMMUTABLE_CACHE_CONTROL);
 
-        let css = get_web_asset("/assets/main-DO0WF65x.css").expect("main css");
+        let css = get_web_asset("/assets/main-DyoPjNf1.css").expect("main css");
         assert!(css.content_type.contains("css"));
         assert_eq!(css.cache_control, IMMUTABLE_CACHE_CONTROL);
 
