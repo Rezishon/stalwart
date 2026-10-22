@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.25-rl1.0.38] - 2026-10-22
+
+RiseLabs fork. `--version` prints `0.16.25-rl1.0.38`. Cargo package version stays `0.16.25`.
+
+### Added
+- MailiaM product rebrand: binary name `mailiam`, archives `mailiam-<target>`, and `MAILIAM_*` runtime env vars.
+- Installer features: unified step runner with progress indicators, `--uninstall`, and `--purge` modes with data safety checks.
+- Docker & networking: port 80 exposed across images, HTTP container healthcheck fallback on `:80`.
+- Automated installer test framework in `scripts/test-install.sh`.
+
+### Changed
+- Default runtime and logging paths migrated to `/var/{lib,log}/mailiam` and `/etc/mailiam`.
+- Streamlined installer prompt sequence; removed redundant hostname and DeltaChat endpoint inputs.
+- First-boot initialization honors `MAILIAM_LISTEN_*` and `MAILIAM_DC_*` keys directly into RocksDB store.
+
 ## [0.16.25-rl1.0.19] - 2026-10-17
 
 RiseLabs fork. `--version` prints `0.16.25-rl1.0.19`. Cargo package version stays `0.16.25`.
