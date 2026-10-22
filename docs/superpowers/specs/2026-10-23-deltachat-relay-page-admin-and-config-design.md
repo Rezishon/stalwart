@@ -1,7 +1,7 @@
 # DeltaChat Relay Page Admin Submenu & /api/v1/config Specification
 
 - **Date:** 2026-10-23
-- **Status:** Approved (Reviewed by UX/Product Expert and Stalwart-Rust Core Expert)
+- **Status:** Approved (Incorporating UX/Product & Stalwart-Rust Expert Findings)
 - **Authors:** RiseLabs / MailiaM Team
 - **Target Components:** `crates/registry`, `crates/deltachat`, `resources/schema/schema.json.gz`, `signup-relay/frontend`
 
@@ -31,29 +31,33 @@ Currently:
    - Editable English name (`platform_name_en`), default `"MailiaM"`.
    - Editable Persian name (`platform_name_fa`), default `"میلیم"`.
    - Optional platform icon (`platform_icon`), default `""` or `"/logo.svg"`.
-   - Optional platform banner/wordmark image (`platform_image`), default `""`.
+   - Optional platform banner/logo image (`platform_image_url`), default `""`.
    - Server-side fallback: If stored string is empty, fallback to `"MailiaM"` (en) and `"میلیم"` (fa).
 
 3. **Admin Contact Channels:**
-   - Dynamic list of contact channels: `[{ title, link, icon, image }]`.
+   - Dynamic list of contact channels: `[{ id, title, title_fa, link, icon, image_url }]`.
    - Supports multiple channels (e.g., Support Email, Telegram Group, Matrix Room).
-   - `icon` (Lucide icon slug or image URL) and `image` (badge/logo URL) are both optional.
+   - `id`: Unique slug (`"support_email"`, `"telegram"`) for React keys and client-side localization lookup.
+   - `title`: English title (required).
+   - `title_fa`: Persian title (optional; falls back to `title` if empty).
+   - `icon`: Lucide icon slug, brand slug (`"telegram"`, `"matrix"`), or SVG/image URL.
+   - `image_url`: Badge/logo URL (optional).
 
 4. **Donation Channels:**
-   - Dynamic list of donation options: `[{ title, link, icon, image }]`.
+   - Dynamic list of donation options: `[{ id, title, title_fa, link, icon, image_url }]`.
    - Supports multiple channels (e.g., Bitcoin, Monero, OpenCollective, ZarinPal).
-   - `icon` and `image` both optional.
+   - Same bilingual title and icon/image fallback support as contact channels.
 
 5. **Download Links:**
-   - Dynamic list of app download channels: `[{ title, link, is_direct, icon, image }]`.
-   - Pre-populated default list of official DeltaChat links from `https://delta.chat/en/download`:
-     - Google Play
-     - F-Droid
-     - Android APK (official direct mirror)
-     - iOS App Store
-     - Desktop (Windows / macOS / Linux)
-     - Direct Server Download (`is_direct: true`, link editable by admin for self-hosted APKs)
-   - Empty Link Filter: Any download link whose `link` is empty is filtered out before returning in `/api/v1/config`.
+   - Dynamic list of app download channels: `[{ id, title, title_fa, link, is_direct, icon, image_url }]`.
+   - Pre-populated default list of official DeltaChat links:
+     1. `id: "google_play"`, `title: "Google Play"`, `title_fa: "گوگل پلی"`, `link: "https://play.google.com/store/apps/details?id=chat.delta"`, `is_direct: false`, `icon: "google-play"`
+     2. `id: "f_droid"`, `title: "F-Droid"`, `title_fa: "اف‌دروید"`, `link: "https://f-droid.org/packages/chat.delta/"`, `is_direct: false`, `icon: "f-droid"`
+     3. `id: "android_apk"`, `title: "Android APK"`, `title_fa: "دانلود فایل APK (رسمی)"`, `link: "https://download.delta.chat/android/"`, `is_direct: false`, `icon: "android"`
+     4. `id: "apple_store"`, `title: "iOS App Store"`, `title_fa: "اپ استور اپل"`, `link: "https://apps.apple.com/app/delta-chat/id1459523234"`, `is_direct: false`, `icon: "apple"`
+     5. `id: "desktop"`, `title: "Desktop"`, `title_fa: "نسخه دسکتاپ (ویندوز / مک / لینوکس)"`, `link: "https://delta.chat/en/download"`, `is_direct: false`, `icon: "desktop"`
+     6. `id: "direct_server"`, `title: "Direct Server Download"`, `title_fa: "دانلود مستقیم سرور"`, `link: ""`, `is_direct: true`, `icon: "download"`
+   - Server-side empty-link filter: Any download link with an empty `link` (e.g. unconfigured direct server download) is filtered out in `handle_config` so the frontend never renders dead links.
 
 6. **Socket Security Description in WebUI:**
    - Update `imapSecurity` and `smtpSecurity` field descriptions in `schema.json.gz` to clearly state valid options:
@@ -74,29 +78,37 @@ Currently:
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DeltaChatLink {
+    #[serde(rename = "id", deserialize_with = "deserialize_null_default")]
+    pub id: String,
     #[serde(rename = "title", deserialize_with = "deserialize_null_default")]
     pub title: String,
+    #[serde(rename = "titleFa", deserialize_with = "deserialize_null_default")]
+    pub title_fa: String,
     #[serde(rename = "link", deserialize_with = "deserialize_null_default")]
     pub link: String,
     #[serde(rename = "icon", deserialize_with = "deserialize_null_default")]
     pub icon: String,
-    #[serde(rename = "image", deserialize_with = "deserialize_null_default")]
-    pub image: String,
+    #[serde(rename = "imageUrl", deserialize_with = "deserialize_null_default")]
+    pub image_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DeltaChatDownloadLink {
+    #[serde(rename = "id", deserialize_with = "deserialize_null_default")]
+    pub id: String,
     #[serde(rename = "title", deserialize_with = "deserialize_null_default")]
     pub title: String,
+    #[serde(rename = "titleFa", deserialize_with = "deserialize_null_default")]
+    pub title_fa: String,
     #[serde(rename = "link", deserialize_with = "deserialize_null_default")]
     pub link: String,
     #[serde(rename = "isDirect")]
     pub is_direct: bool,
     #[serde(rename = "icon", deserialize_with = "deserialize_null_default")]
     pub icon: String,
-    #[serde(rename = "image", deserialize_with = "deserialize_null_default")]
-    pub image: String,
+    #[serde(rename = "imageUrl", deserialize_with = "deserialize_null_default")]
+    pub image_url: String,
 }
 ```
 
@@ -116,8 +128,8 @@ pub struct DeltaChat {
     pub platform_name_fa: String,
     #[serde(rename = "platformIcon", deserialize_with = "deserialize_null_default")]
     pub platform_icon: String,
-    #[serde(rename = "platformImage", deserialize_with = "deserialize_null_default")]
-    pub platform_image: String,
+    #[serde(rename = "platformImageUrl", deserialize_with = "deserialize_null_default")]
+    pub platform_image_url: String,
     #[serde(rename = "adminContacts")]
     pub admin_contacts: List<DeltaChatLink>,
     #[serde(rename = "donationLinks")]
@@ -130,36 +142,26 @@ pub struct DeltaChat {
 ### 3.3. Pickle Versioning & Backward Compatibility (`crates/registry/src/schema/structs_impl.rs`)
 
 - Version bump: `const VERSION: u8 = 5;`
-- Default download links list populated in `DeltaChat::default()`:
-  1. `title: "Google Play"`, `link: "https://play.google.com/store/apps/details?id=chat.delta"`, `is_direct: false`, `icon: "google-play"`, `image: ""`
-  2. `title: "F-Droid"`, `link: "https://f-droid.org/packages/chat.delta/"`, `is_direct: false`, `icon: "f-droid"`, `image: ""`
-  3. `title: "Android APK"`, `link: "https://download.delta.chat/android/"`, `is_direct: false`, `icon: "android"`, `image: ""`
-  4. `title: "iOS App Store"`, `link: "https://apps.apple.com/app/delta-chat/id1459523234"`, `is_direct: false`, `icon: "apple"`, `image: ""`
-  5. `title: "Desktop"`, `link: "https://delta.chat/en/download"`, `is_direct: false`, `icon: "desktop"`, `image: ""`
-  6. `title: "Direct Server Download"`, `link: ""`, `is_direct: true`, `icon: "download"`, `image: ""`
+- In `DeltaChat::default()`: populate the 6 official download links with IDs, en/fa titles, and icons.
 - Deserialization in `DeltaChat::unpickle`:
   ```rust
   if stream.version() >= 5 {
       this.platform_name_en = Pickle::unpickle(stream)?;
       this.platform_name_fa = Pickle::unpickle(stream)?;
       this.platform_icon = Pickle::unpickle(stream)?;
-      this.platform_image = Pickle::unpickle(stream)?;
+      this.platform_image_url = Pickle::unpickle(stream)?;
       this.admin_contacts = Pickle::unpickle(stream)?;
       this.donation_links = Pickle::unpickle(stream)?;
       this.download_links = Pickle::unpickle(stream)?;
   }
   ```
-- Also update `IntoValue for DeltaChat` and `RegistryJsonPropertyPatch for DeltaChat` to include all 7 new properties for JMAP API compatibility.
+- Update `IntoValue for DeltaChat` and `RegistryJsonPropertyPatch for DeltaChat` to include all 7 new properties for JMAP get/set and WebUI forms.
 
 ### 3.4. Validation Rules (`DeltaChat::validate`)
 
-- `platform_name_en`: max length 64 characters.
-- `platform_name_fa`: max length 64 characters.
-- `platform_icon`: max length 512 characters.
-- `platform_image`: max length 512 characters.
-- `admin_contacts`: max 20 entries; each item `title` max 128 characters, `link` max 1024 characters.
-- `donation_links`: max 20 entries; each item `title` max 128 characters, `link` max 1024 characters.
-- `download_links`: max 20 entries; each item `title` max 128 characters, `link` max 1024 characters.
+- `platform_name_en`, `platform_name_fa`: max length 64 characters.
+- `platform_icon`, `platform_image_url`: max length 512 characters.
+- `admin_contacts`, `donation_links`, `download_links`: max 20 entries each; each item `id` max 64 characters, `title`/`title_fa` max 128 characters, `link` max 1024 characters.
 
 ---
 
@@ -170,24 +172,32 @@ pub struct DeltaChat {
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkItem {
+    #[serde(default)]
+    pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub title_fa: String,
     pub link: String,
     #[serde(default)]
     pub icon: String,
     #[serde(default)]
-    pub image: String,
+    pub image_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DownloadLinkItem {
+    #[serde(default)]
+    pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub title_fa: String,
     pub link: String,
     #[serde(default)]
     pub is_direct: bool,
     #[serde(default)]
     pub icon: String,
     #[serde(default)]
-    pub image: String,
+    pub image_url: String,
 }
 ```
 
@@ -196,7 +206,7 @@ Included in `DeltaChatSettings`:
 pub platform_name_en: String,
 pub platform_name_fa: String,
 pub platform_icon: String,
-pub platform_image: String,
+pub platform_image_url: String,
 pub admin_contacts: Vec<LinkItem>,
 pub donation_links: Vec<LinkItem>,
 pub download_links: Vec<DownloadLinkItem>,
@@ -229,37 +239,45 @@ pub download_links: Vec<DownloadLinkItem>,
     "fa": "میلیم"
   },
   "platform_icon": "/logo.svg",
-  "platform_image": "",
+  "platform_image_url": "",
   "admin_contacts": [
     {
+      "id": "telegram",
       "title": "Telegram Support",
+      "title_fa": "پشتیبانی تلگرام",
       "link": "https://t.me/example_support",
       "icon": "telegram",
-      "image": ""
+      "image_url": ""
     }
   ],
   "donation_links": [
     {
+      "id": "bitcoin",
       "title": "Bitcoin",
+      "title_fa": "بیت‌کوین",
       "link": "bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
       "icon": "bitcoin",
-      "image": "https://example.org/btc.png"
+      "image_url": "https://example.org/btc.png"
     }
   ],
   "download_links": [
     {
+      "id": "google_play",
       "title": "Google Play",
+      "title_fa": "گوگل پلی",
       "link": "https://play.google.com/store/apps/details?id=chat.delta",
       "is_direct": false,
       "icon": "google-play",
-      "image": ""
+      "image_url": ""
     },
     {
-      "title": "Direct Server APK",
+      "id": "direct_server",
+      "title": "Direct Server Download",
+      "title_fa": "دانلود مستقیم سرور",
       "link": "https://example.org/download/deltachat.apk",
       "is_direct": true,
       "icon": "download",
-      "image": ""
+      "image_url": ""
     }
   ]
 }
@@ -268,7 +286,7 @@ pub download_links: Vec<DownloadLinkItem>,
 In `handle_config`:
 - `platform_name.en`: if settings value is empty, fallback to `"MailiaM"`.
 - `platform_name.fa`: if settings value is empty, fallback to `"میلیم"`.
-- `download_links`: filter out items with empty `link`.
+- `download_links`: filter out items with empty `link` (`!d.link.trim().is_empty()`).
 
 ---
 
@@ -304,7 +322,7 @@ Add `Relay Page` under `Settings -> DeltaChat`:
         { "name": "platformNameEn", "label": "Platform Name (English)", "placeholder": "MailiaM" },
         { "name": "platformNameFa", "label": "Platform Name (Persian)", "placeholder": "میلیم" },
         { "name": "platformIcon", "label": "Platform Icon (URL or icon identifier)", "placeholder": "/logo.svg" },
-        { "name": "platformImage", "label": "Platform Banner/Logo Image (URL)", "placeholder": "https://example.org/banner.png" }
+        { "name": "platformImageUrl", "label": "Platform Banner/Logo Image (URL)", "placeholder": "https://example.org/banner.png" }
       ]
     },
     {
@@ -331,11 +349,11 @@ Add `Relay Page` under `Settings -> DeltaChat`:
 
 ### 5.3. Sub-Object Schemas & Forms
 - `x:DeltaChatLink`:
-  - `fields`: `title` (string), `link` (string), `icon` (string), `image` (string).
-  - `forms`: Section "Link Item" with Title, URL, Icon, Image URL inputs.
+  - `fields`: `id` (string), `title` (string), `titleFa` (string), `link` (string), `icon` (string), `imageUrl` (string).
+  - `forms`: Section "Link Item" with ID, English Title, Persian Title, URL, Icon, Image URL inputs.
 - `x:DeltaChatDownloadLink`:
-  - `fields`: `title` (string), `link` (string), `isDirect` (boolean), `icon` (string), `image` (string).
-  - `forms`: Section "Download Item" with Title, URL, Direct Download toggle, Icon, Image URL inputs.
+  - `fields`: `id` (string), `title` (string), `titleFa` (string), `link` (string), `isDirect` (boolean), `icon` (string), `imageUrl` (string).
+  - `forms`: Section "Download Item" with ID, English Title, Persian Title, URL, Direct Download toggle, Icon, Image URL inputs.
 
 ### 5.4. Field Guidance Updates for `x:DeltaChat/DeltaChatEndpoints`
 - Update `imapSecurity`:
@@ -354,18 +372,22 @@ Add `Relay Page` under `Settings -> DeltaChat`:
 In `signup-relay/frontend/src/services/types.ts`:
 ```typescript
 export interface LinkItem {
+  id?: string;
   title: string;
+  title_fa?: string;
   link: string;
   icon?: string;
-  image?: string;
+  image_url?: string;
 }
 
 export interface DownloadLinkItem {
+  id?: string;
   title: string;
+  title_fa?: string;
   link: string;
   is_direct?: boolean;
   icon?: string;
-  image?: string;
+  image_url?: string;
 }
 
 export interface PlatformNameConfig {
@@ -388,25 +410,26 @@ export interface ServerConfig {
   altcha?: AltchaConfig;
   platform_name?: PlatformNameConfig;
   platform_icon?: string;
-  platform_image?: string;
+  platform_image_url?: string;
   admin_contacts?: LinkItem[];
   donation_links?: LinkItem[];
   download_links?: DownloadLinkItem[];
 }
 ```
 
-### Rendering Guidelines:
-1. **Icon / Image Fallback Hierarchy:**
-   - If `image` is non-empty -> render `<img src={item.image} />`.
+### Rendering & UX Guidelines:
+1. **Title Selection:** Use `(lang === 'fa' && item.title_fa) ? item.title_fa : item.title`.
+2. **Icon / Image Fallback Hierarchy:**
+   - If `image_url` is non-empty -> render `<img src={item.image_url} />`.
    - Else if `icon` starts with `http://`, `https://`, or `/` -> render `<img src={item.icon} />`.
-   - Else if `icon` matches a known Lucide icon name (e.g. `mail`, `send`, `heart`, `download`) -> render corresponding Lucide icon.
-   - Else fallback to default category icon + text `title`.
-2. **Censorship / Iran UX:**
-   - For `fa` locale, prioritize items where `is_direct: true` and APK links above Google Play (which is often blocked or country-restricted in Iran).
-   - Display `is_direct` download with a prominent "دانلود مستقیم سرور" (Direct Server Download) badge.
+   - Else if `icon` matches a known brand icon (`telegram`, `matrix`, `bitcoin`, `google-play`, `f-droid`, `apple`, `desktop`, `download`) -> render inline SVG.
+   - Else fallback to default category Lucide icon + text title.
+3. **Censorship / Iran UX:**
+   - For `fa` locale, sort items where `is_direct: true` and APK links to the top before Google Play.
+   - Display `is_direct` download with prominent "دانلود مستقیم سرور" badge.
    - Wrap crypto addresses and links in `dir="ltr"` to avoid bidi rendering bugs.
-3. **Link Sanitization:**
-   - Frontend validates link starts with `https://`, `http://`, `mailto:`, or `tg://` before rendering in `<a>` tags.
+4. **Link Sanitization:**
+   - Frontend validates link starts with `https://`, `http://`, `mailto:`, `tg:`, `matrix:`, `bitcoin:`, or `monero:` before rendering in `<a>` tags with `rel="noopener noreferrer" target="_blank"`.
 
 ---
 
