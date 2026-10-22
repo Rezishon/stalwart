@@ -1365,6 +1365,18 @@ impl EnumImpl for Property {
             b"customPrefixEnabled" => Property::CustomPrefixEnabled,
             b"customPrefix" => Property::CustomPrefix,
             b"usernameBlacklist" => Property::UsernameBlacklist,
+            b"platformNameEn" => Property::PlatformNameEn,
+            b"platformNameFa" => Property::PlatformNameFa,
+            b"platformIcon" => Property::PlatformIcon,
+            b"platformImageUrl" => Property::PlatformImageUrl,
+            b"adminContacts" => Property::AdminContacts,
+            b"donationLinks" => Property::DonationLinks,
+            b"downloadLinks" => Property::DownloadLinks,
+            b"titleFa" => Property::TitleFa,
+            b"link" => Property::Link,
+            b"icon" => Property::Icon,
+            b"imageUrl" => Property::ImageUrl,
+            b"isDirect" => Property::IsDirect,
         }
     }
 
@@ -2325,6 +2337,18 @@ impl EnumImpl for Property {
             Property::CustomPrefixEnabled => "customPrefixEnabled",
             Property::CustomPrefix => "customPrefix",
             Property::UsernameBlacklist => "usernameBlacklist",
+            Property::PlatformNameEn => "platformNameEn",
+            Property::PlatformNameFa => "platformNameFa",
+            Property::PlatformIcon => "platformIcon",
+            Property::PlatformImageUrl => "platformImageUrl",
+            Property::AdminContacts => "adminContacts",
+            Property::DonationLinks => "donationLinks",
+            Property::DownloadLinks => "downloadLinks",
+            Property::TitleFa => "titleFa",
+            Property::Link => "link",
+            Property::Icon => "icon",
+            Property::ImageUrl => "imageUrl",
+            Property::IsDirect => "isDirect",
         }
     }
 
@@ -3289,11 +3313,23 @@ impl EnumImpl for Property {
             958 => Some(Property::CustomPrefixEnabled),
             959 => Some(Property::CustomPrefix),
             960 => Some(Property::UsernameBlacklist),
+            961 => Some(Property::PlatformNameEn),
+            962 => Some(Property::PlatformNameFa),
+            963 => Some(Property::PlatformIcon),
+            964 => Some(Property::PlatformImageUrl),
+            965 => Some(Property::AdminContacts),
+            966 => Some(Property::DonationLinks),
+            967 => Some(Property::DownloadLinks),
+            968 => Some(Property::TitleFa),
+            969 => Some(Property::Link),
+            970 => Some(Property::Icon),
+            971 => Some(Property::ImageUrl),
+            972 => Some(Property::IsDirect),
             _ => None,
         }
     }
 
-    const COUNT: usize = 961;
+    const COUNT: usize = 973;
 }
 
 impl serde::Serialize for Property {
@@ -8038,6 +8074,35 @@ impl From<Object> for DeltaChat {
         match obj.inner {
             ObjectInner::DeltaChat(obj) => obj,
             _ => unreachable!(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deltachat_relay_properties_mapping() {
+        let cases = [
+            ("platformNameEn", Property::PlatformNameEn, 961),
+            ("platformNameFa", Property::PlatformNameFa, 962),
+            ("platformIcon", Property::PlatformIcon, 963),
+            ("platformImageUrl", Property::PlatformImageUrl, 964),
+            ("adminContacts", Property::AdminContacts, 965),
+            ("donationLinks", Property::DonationLinks, 966),
+            ("downloadLinks", Property::DownloadLinks, 967),
+            ("titleFa", Property::TitleFa, 968),
+            ("link", Property::Link, 969),
+            ("icon", Property::Icon, 970),
+            ("imageUrl", Property::ImageUrl, 971),
+            ("isDirect", Property::IsDirect, 972),
+        ];
+
+        for (name, prop, id) in cases {
+            assert_eq!(Property::parse(name), Some(prop));
+            assert_eq!(prop.as_str(), name);
+            assert_eq!(Property::from_id(id), Some(prop));
         }
     }
 }
