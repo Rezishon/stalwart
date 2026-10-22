@@ -16,8 +16,8 @@
 - Crate dependency direction is one-way: `http` -> `deltachat` -> `registry` -> `types`.
 - All new registry properties must register in `crates/registry/src/schema/properties.rs` and `properties_impl.rs`.
 - Pickle serialization must be strictly sequential; version 4 -> 5 migration must cleanly unpickle existing v0..=v4 blobs using safe defaults.
-- Any direct server download or client download item with empty `link` must be filtered out in `/api/v1/config`.
-- URL schemes for links must be validated against the allowlist: `https://`, `http://`, `mailto:`, `tg:`, `matrix:`, `bitcoin:`, `monero:`, or `/` (not `//`). Reject `javascript:` and control characters.
+- Any direct server download or client download/contact/donation item with empty `link` must be filtered out in `/api/v1/config`.
+- URL schemes for links must be validated against the allowlist: `https://`, `http://`, `mailto:`, `tg:`, `matrix:`, `bitcoin:`, `monero:`, or safe relative path `/` (not `//` or `/\\`). Reject `javascript:`, data URIs, ASCII control characters, and Unicode Bidi override characters (`U+202A..=U+202E`, `U+2066..=U+2069`).
 - Use `patch_empty_ok` for all optional string fields in JMAP patch implementations to allow empty strings and clearing values without JMAP patch rejections.
 - Re-compressed schema must use `gzip -n -9` so `schema.json.sha256` is deterministic.
 
@@ -207,12 +207,23 @@ fn test_deltachat_relay_link_security_validation() {
     assert!(!dc.validate(&mut errors));
     errors.clear();
 
-    // Test valid relative URL rejection of control characters
+    // Test backslash relative rejection (/\\)
+    dc.admin_contacts[0].link = "/\\\\attacker.com/evil.apk".into();
+    assert!(!dc.validate(&mut errors));
+    errors.clear();
+
+    // Test rejection of ASCII control characters
     dc.admin_contacts[0].link = "/downloads/good.apk\r\n".into();
     assert!(!dc.validate(&mut errors));
     errors.clear();
 
+    // Test rejection of Unicode Bidi overrides
+    dc.admin_contacts[0].title = "good\u{202E}txt.apk".into();
+    assert!(!dc.validate(&mut errors));
+    errors.clear();
+
     // Test valid relative URL acceptance
+    dc.admin_contacts[0].title = "Support".into();
     dc.admin_contacts[0].link = "/downloads/good.apk".into();
     assert!(dc.validate(&mut errors));
 }
@@ -293,12 +304,14 @@ Add fields to `pub struct DeltaChat`:
    - Use `patch_empty_ok` for `title_fa`, `icon`, `image_url`, `link`.
 3. Bump `const VERSION: u8 = 5;` in `impl ObjectImpl for DeltaChat`.
 4. In `DeltaChat::validate`:
+   - Enforce clean text (no ASCII control characters and no Unicode Bidi overrides `\u{202A}..=\u{202E}`, `\u{2066}..=\u{2069}`).
    - Validate length caps: `platform_name_en` / `platform_name_fa` <= 64, `platform_icon` / `platform_image_url` <= 512.
    - Validate list lengths <= 20 items each.
-   - Validate link URLs with lowercase scheme allowlist, rejecting control characters and `//`:
+   - Validate item lengths: `id` <= 64, `title` / `title_fa` <= 128, `icon` <= 128, `image_url` <= 1024, `link` <= 1024.
+   - Validate link URLs with lowercase scheme allowlist, rejecting control characters, `//`, and `/\\`:
      ```rust
      fn is_safe_link(s: &str) -> bool {
-         if s.chars().any(|c| c.is_control()) || s.len() > 1024 {
+         if s.chars().any(|c| c.is_ascii_control() || ('\u{202A}'..='\u{202E}').contains(&c) || ('\u{2066}'..='\u{2069}').contains(&c)) || s.len() > 1024 {
              return false;
          }
          let lower = s.trim().to_ascii_lowercase();
@@ -310,7 +323,7 @@ Add fields to `pub struct DeltaChat`:
              || lower.starts_with("matrix:")
              || lower.starts_with("bitcoin:")
              || lower.starts_with("monero:")
-             || (lower.starts_with('/') && !lower.starts_with("//"))
+             || (lower.starts_with('/') && !lower.starts_with("//") && !lower.starts_with("/\\"))
      }
      ```
 5. In `DeltaChat::pickle`: Append pickling of the 7 new fields.
@@ -352,14 +365,24 @@ fn test_config_handler_relay_page_data() {
     let mut settings = DeltaChatSettings::default();
     settings.platform_name_en = "MailiaM".into();
     settings.platform_name_fa = "میلیم".into();
-    settings.admin_contacts = vec![crate::config::LinkItem {
-        id: "tg".into(),
-        title: "Telegram".into(),
-        title_fa: "تلگرام".into(),
-        link: "https://t.me/example".into(),
-        icon: "telegram".into(),
-        image_url: "".into(),
-    }];
+    settings.admin_contacts = vec![
+        crate::config::LinkItem {
+            id: "tg".into(),
+            title: "Telegram".into(),
+            title_fa: "تلگرام".into(),
+            link: "https://t.me/example".into(),
+            icon: "telegram".into(),
+            image_url: "".into(),
+        },
+        crate::config::LinkItem {
+            id: "empty_contact".into(),
+            title: "Empty".into(),
+            title_fa: "".into(),
+            link: "   ".into(), // Empty link must be filtered out!
+            icon: "".into(),
+            image_url: "".into(),
+        },
+    ];
     settings.download_links = vec![
         crate::config::DownloadLinkItem {
             id: "gp".into(),
@@ -468,7 +491,7 @@ pub struct PlatformNameConfig {
 
 - [ ] **Step 5: Update `handle_config` in `crates/deltachat/src/handlers/system.rs`**
 
-Pre-allocate and filter download links:
+Pre-allocate and filter download links, contacts, and donation links against empty strings:
 ```rust
     let platform_name = PlatformNameConfig {
         en: if settings.platform_name_en.trim().is_empty() {
@@ -487,6 +510,24 @@ Pre-allocate and filter download links:
     download_links.extend(
         settings
             .download_links
+            .iter()
+            .filter(|d| !d.link.trim().is_empty())
+            .cloned(),
+    );
+
+    let mut admin_contacts = Vec::with_capacity(settings.admin_contacts.len());
+    admin_contacts.extend(
+        settings
+            .admin_contacts
+            .iter()
+            .filter(|c| !c.link.trim().is_empty())
+            .cloned(),
+    );
+
+    let mut donation_links = Vec::with_capacity(settings.donation_links.len());
+    donation_links.extend(
+        settings
+            .donation_links
             .iter()
             .filter(|d| !d.link.trim().is_empty())
             .cloned(),
@@ -594,15 +635,16 @@ git commit -m "feat(webui): add relay page settings form and enhance socket secu
    - Admin contacts (`[{ id, title, title_fa, link, icon, image_url }]`) -> Covered in Tasks 1, 2, 3, 4.
    - Donation links (`[{ id, title, title_fa, link, icon, image_url }]`) -> Covered in Tasks 1, 2, 3, 4.
    - Download links (`[{ id, title, title_fa, link, is_direct, icon, image_url }]` with 6 defaults) -> Covered in Tasks 1, 2, 3, 4.
-   - Empty link filter on direct download -> Covered in Task 3.
+   - Empty link filter on direct download, contacts, and donations -> Covered in Task 3.
    - Socket security guidance (`plain`, `ssl`, `starttls`, `default`) -> Covered in Task 4.
 2. **Security Audit Fixes Incorporated:**
    - Lowercase scheme allowlist.
-   - Protocol-relative (`//`) bypass prevention.
-   - Control character rejection.
+   - Protocol-relative (`//`) and backslash (`/\\`) bypass prevention.
+   - Control character and Unicode Bidi override character rejection.
    - Optional string clearing bug fixed with `patch_empty_ok`.
+   - Empty link filtering extended to contacts and donations.
 3. **Rust Audit Fixes Incorporated:**
    - `Property::parse(&str)` and `Property::from_id(u16)`.
    - Bumped `Property::COUNT = 973`.
-   - Pre-allocated filtered download links vector.
+   - Pre-allocated filtered vectors for download links, contacts, and donations.
    - Fixed `PickledStream` signature usage.
