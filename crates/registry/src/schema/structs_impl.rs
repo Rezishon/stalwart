@@ -48741,4 +48741,65 @@ mod deltachat_pickle_tests {
         dc.admin_contacts[0].link = "/downloads/good.apk".into();
         assert!(dc.validate(&mut errors));
     }
+
+    #[test]
+    fn test_deltachat_relay_icons_and_images_optional_and_empty() {
+        use jmap_tools::JsonPointer;
+        let mut dc = DeltaChat::default();
+        dc.platform_icon = "old_icon".into();
+        dc.platform_image_url = "https://example.org/old_banner.png".into();
+
+        // Patch platformIcon and platformImageUrl with null and empty string
+        let ptr = JsonPointer::<Property>::parse("platformIcon");
+        assert!(dc.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Null).is_ok());
+        assert_eq!(dc.platform_icon, "");
+
+        let ptr = JsonPointer::<Property>::parse("platformImageUrl");
+        assert!(dc.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Str("".into())).is_ok());
+        assert_eq!(dc.platform_image_url, "");
+
+        // Patch DeltaChatLink icon and imageUrl with null / empty
+        let mut link = DeltaChatLink {
+            id: "contact_1".into(),
+            title: "Support".into(),
+            title_fa: "".into(),
+            link: "https://support.example.org".into(),
+            icon: "telegram".into(),
+            image_url: "https://example.org/img.png".into(),
+        };
+
+        let ptr = JsonPointer::<Property>::parse("icon");
+        assert!(link.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Null).is_ok());
+        assert_eq!(link.icon, "");
+
+        let ptr = JsonPointer::<Property>::parse("imageUrl");
+        assert!(link.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Str("".into())).is_ok());
+        assert_eq!(link.image_url, "");
+
+        // Patch DeltaChatDownloadLink icon and imageUrl with null / empty
+        let mut download = DeltaChatDownloadLink {
+            id: "dl_1".into(),
+            title: "Client".into(),
+            title_fa: "".into(),
+            link: "https://example.org/client.apk".into(),
+            is_direct: false,
+            icon: "android".into(),
+            image_url: "https://example.org/android.png".into(),
+        };
+
+        let ptr = JsonPointer::<Property>::parse("icon");
+        assert!(download.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Null).is_ok());
+        assert_eq!(download.icon, "");
+
+        let ptr = JsonPointer::<Property>::parse("imageUrl");
+        assert!(download.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Null).is_ok());
+        assert_eq!(download.image_url, "");
+
+        // All empty icons and images validate successfully
+        dc.admin_contacts.push(link);
+        dc.download_links.push(download);
+        let mut errors = Vec::new();
+        assert!(dc.validate(&mut errors));
+        assert!(errors.is_empty());
+    }
 }
