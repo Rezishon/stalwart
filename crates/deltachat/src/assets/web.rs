@@ -103,11 +103,25 @@ mod tests {
 
     #[test]
     fn test_hashed_js_and_css_bundles() {
-        let js = get_web_asset("/assets/main-BhZJYHOT.js").expect("main js");
+        let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let assets_dir = std::path::Path::new(&manifest).join("assets").join("assets");
+        let mut js_path = None;
+        let mut css_path = None;
+        if let Ok(entries) = std::fs::read_dir(assets_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("main-") && name.ends_with(".js") {
+                    js_path = Some(format!("/assets/{name}"));
+                } else if name.starts_with("main-") && name.ends_with(".css") {
+                    css_path = Some(format!("/assets/{name}"));
+                }
+            }
+        }
+        let js = get_web_asset(&js_path.expect("main js file exists")).expect("main js");
         assert!(js.content_type.contains("javascript"));
         assert_eq!(js.cache_control, IMMUTABLE_CACHE_CONTROL);
 
-        let css = get_web_asset("/assets/main-DyoPjNf1.css").expect("main css");
+        let css = get_web_asset(&css_path.expect("main css file exists")).expect("main css");
         assert!(css.content_type.contains("css"));
         assert_eq!(css.cache_control, IMMUTABLE_CACHE_CONTROL);
 
