@@ -9,7 +9,7 @@ use crate::config::{DeltaChatSettings, EndpointsConfig};
 use crate::error::DeltaChatError;
 use crate::models::{
     ConfigDiscoveryAltcha, ConfigDiscoveryEndpoints, ConfigDiscoveryMailEndpoint,
-    ConfigDiscoveryResponse, HealthResponse,
+    ConfigDiscoveryResponse, HealthResponse, PlatformNameConfig,
 };
 use std::time::Instant;
 
@@ -45,6 +45,46 @@ pub fn handle_config(
         None
     };
 
+    let platform_name = PlatformNameConfig {
+        en: if settings.platform_name_en.trim().is_empty() {
+            "MailiaM".into()
+        } else {
+            settings.platform_name_en.clone()
+        },
+        fa: if settings.platform_name_fa.trim().is_empty() {
+            "میلیم".into()
+        } else {
+            settings.platform_name_fa.clone()
+        },
+    };
+
+    let mut download_links = Vec::with_capacity(settings.download_links.len());
+    download_links.extend(
+        settings
+            .download_links
+            .iter()
+            .filter(|d| !d.link.trim().is_empty())
+            .cloned(),
+    );
+
+    let mut admin_contacts = Vec::with_capacity(settings.admin_contacts.len());
+    admin_contacts.extend(
+        settings
+            .admin_contacts
+            .iter()
+            .filter(|c| !c.link.trim().is_empty())
+            .cloned(),
+    );
+
+    let mut donation_links = Vec::with_capacity(settings.donation_links.len());
+    donation_links.extend(
+        settings
+            .donation_links
+            .iter()
+            .filter(|d| !d.link.trim().is_empty())
+            .cloned(),
+    );
+
     Ok(ConfigDiscoveryResponse {
         domain,
         registration_open: settings.registration_open,
@@ -73,6 +113,12 @@ pub fn handle_config(
         instant_prefix: settings.instant_prefix.clone(),
         custom_prefix_enabled: settings.custom_prefix_enabled,
         custom_prefix: settings.custom_prefix.clone(),
+        platform_name,
+        platform_icon: settings.platform_icon.clone(),
+        platform_image_url: settings.platform_image_url.clone(),
+        admin_contacts,
+        donation_links,
+        download_links,
     })
 }
 
@@ -91,7 +137,7 @@ pub fn handle_altcha_challenge(
 mod tests {
     use super::*;
     use crate::config::{
-        endpoints_from_settings, CertificateChecks, EndpointSecurity, MailEndpointConfig,
+        CertificateChecks, EndpointSecurity, MailEndpointConfig, endpoints_from_settings,
     };
 
     fn test_endpoints() -> EndpointsConfig {
@@ -207,5 +253,112 @@ mod tests {
         let challenge = handle_altcha_challenge(&settings, &altcha).unwrap();
         assert_eq!(challenge.algorithm, "SHA-256");
         assert_eq!(challenge.max_number, 100_000);
+    }
+
+    #[test]
+    fn test_config_handler_relay_page_data() {
+        let settings = DeltaChatSettings {
+            platform_name_en: "MailiaM".into(),
+            platform_name_fa: "میلیم".into(),
+            platform_icon: "/logo.svg".into(),
+            platform_image_url: "https://example.org/banner.png".into(),
+            admin_contacts: vec![
+                crate::config::LinkItem {
+                    id: "tg".into(),
+                    title: "Telegram".into(),
+                    title_fa: "تلگرام".into(),
+                    link: "https://t.me/example".into(),
+                    icon: "telegram".into(),
+                    image_url: "".into(),
+                },
+                crate::config::LinkItem {
+                    id: "empty_contact".into(),
+                    title: "Empty".into(),
+                    title_fa: "".into(),
+                    link: "   ".into(), // Empty link must be filtered out!
+                    icon: "".into(),
+                    image_url: "".into(),
+                },
+            ],
+            donation_links: vec![
+                crate::config::LinkItem {
+                    id: "btc".into(),
+                    title: "Bitcoin".into(),
+                    title_fa: "بیت‌کوین".into(),
+                    link: "bitcoin:bc1q...".into(),
+                    icon: "bitcoin".into(),
+                    image_url: "".into(),
+                },
+                crate::config::LinkItem {
+                    id: "empty_donation".into(),
+                    title: "Empty".into(),
+                    title_fa: "".into(),
+                    link: "".into(), // Empty link must be filtered out!
+                    icon: "".into(),
+                    image_url: "".into(),
+                },
+            ],
+            download_links: vec![
+                crate::config::DownloadLinkItem {
+                    id: "gp".into(),
+                    title: "Google Play".into(),
+                    title_fa: "گوگل پلی".into(),
+                    link: "https://play.google.com".into(),
+                    is_direct: false,
+                    icon: "google-play".into(),
+                    image_url: "".into(),
+                },
+                crate::config::DownloadLinkItem {
+                    id: "direct_empty".into(),
+                    title: "Direct APK".into(),
+                    title_fa: "".into(),
+                    link: "   ".into(), // Empty link must be filtered out!
+                    is_direct: true,
+                    icon: "download".into(),
+                    image_url: "".into(),
+                },
+            ],
+            ..Default::default()
+        };
+
+        let altcha = AltchaEngine::new(b"secret".to_vec(), 100_000);
+        let endpoints = test_endpoints();
+        let resp = handle_config(
+            &settings,
+            &altcha,
+            "localhost".into(),
+            endpoints,
+            "argon2id",
+        )
+        .unwrap();
+
+        assert_eq!(resp.platform_name.en, "MailiaM");
+        assert_eq!(resp.platform_name.fa, "میلیم");
+        assert_eq!(resp.platform_icon, "/logo.svg");
+        assert_eq!(resp.platform_image_url, "https://example.org/banner.png");
+        assert_eq!(resp.admin_contacts.len(), 1);
+        assert_eq!(resp.admin_contacts[0].id, "tg");
+        assert_eq!(resp.donation_links.len(), 1);
+        assert_eq!(resp.donation_links[0].id, "btc");
+        // Empty link filtered:
+        assert_eq!(resp.download_links.len(), 1);
+        assert_eq!(resp.download_links[0].id, "gp");
+
+        // Verify fallback when names are whitespace or empty
+        let empty_names = DeltaChatSettings {
+            platform_name_en: "   ".into(),
+            platform_name_fa: "".into(),
+            ..Default::default()
+        };
+        let resp_fallback = handle_config(
+            &empty_names,
+            &altcha,
+            "localhost".into(),
+            test_endpoints(),
+            "argon2id",
+        )
+        .unwrap();
+        assert_eq!(resp_fallback.platform_name.en, "MailiaM");
+        assert_eq!(resp_fallback.platform_name.fa, "میلیم");
     }
 }
