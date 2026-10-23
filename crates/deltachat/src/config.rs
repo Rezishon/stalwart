@@ -67,6 +67,63 @@ pub struct AltchaSettings {
     pub hmac_secret: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LinkItem {
+    #[serde(default)]
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub title_fa: String,
+    pub link: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub image_url: String,
+}
+
+impl From<registry::schema::structs::DeltaChatLink> for LinkItem {
+    fn from(l: registry::schema::structs::DeltaChatLink) -> Self {
+        Self {
+            id: l.id,
+            title: l.title,
+            title_fa: l.title_fa,
+            link: l.link,
+            icon: l.icon,
+            image_url: l.image_url,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DownloadLinkItem {
+    #[serde(default)]
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub title_fa: String,
+    pub link: String,
+    #[serde(default)]
+    pub is_direct: bool,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub image_url: String,
+}
+
+impl From<registry::schema::structs::DeltaChatDownloadLink> for DownloadLinkItem {
+    fn from(d: registry::schema::structs::DeltaChatDownloadLink) -> Self {
+        Self {
+            id: d.id,
+            title: d.title,
+            title_fa: d.title_fa,
+            link: d.link,
+            is_direct: d.is_direct,
+            icon: d.icon,
+            image_url: d.image_url,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DeltaChatSettings {
@@ -88,6 +145,13 @@ pub struct DeltaChatSettings {
     pub custom_prefix_enabled: bool,
     pub custom_prefix: String,
     pub username_blacklist: Vec<String>,
+    pub platform_name_en: String,
+    pub platform_name_fa: String,
+    pub platform_icon: String,
+    pub platform_image_url: String,
+    pub admin_contacts: Vec<LinkItem>,
+    pub donation_links: Vec<LinkItem>,
+    pub download_links: Vec<DownloadLinkItem>,
 }
 
 impl Default for DeltaChatSettings {
@@ -122,6 +186,13 @@ impl Default for DeltaChatSettings {
                 .iter()
                 .map(|s| s.trim().to_ascii_lowercase())
                 .collect(),
+            platform_name_en: "MailiaM".into(),
+            platform_name_fa: "میلیم".into(),
+            platform_icon: String::new(),
+            platform_image_url: String::new(),
+            admin_contacts: Vec::new(),
+            donation_links: Vec::new(),
+            download_links: Vec::new(),
         }
     }
 }
@@ -156,7 +227,9 @@ impl DeltaChatSettings {
     }
 }
 
-pub fn endpoints_from_settings(settings: &DeltaChatSettings) -> Result<EndpointsConfig, DeltaChatError> {
+pub fn endpoints_from_settings(
+    settings: &DeltaChatSettings,
+) -> Result<EndpointsConfig, DeltaChatError> {
     Ok(EndpointsConfig {
         imap: settings.imap.clone(),
         smtp: settings.smtp.clone(),
@@ -227,6 +300,17 @@ impl From<registry::schema::structs::DeltaChat> for DeltaChatSettings {
                 .into_iter()
                 .map(|s| s.trim().to_ascii_lowercase())
                 .collect(),
+            platform_name_en: c.platform_name_en,
+            platform_name_fa: c.platform_name_fa,
+            platform_icon: c.platform_icon,
+            platform_image_url: c.platform_image_url,
+            admin_contacts: c.admin_contacts.into_iter().map(LinkItem::from).collect(),
+            donation_links: c.donation_links.into_iter().map(LinkItem::from).collect(),
+            download_links: c
+                .download_links
+                .into_iter()
+                .map(DownloadLinkItem::from)
+                .collect(),
         }
     }
 }
@@ -250,6 +334,13 @@ mod tests {
             settings.username_blacklist,
             registry::schema::structs_impl::DEFAULT_USERNAME_BLACKLIST
         );
+        assert_eq!(settings.platform_name_en, "MailiaM");
+        assert_eq!(settings.platform_name_fa, "میلیم");
+        assert_eq!(settings.platform_icon, "");
+        assert_eq!(settings.platform_image_url, "");
+        assert!(settings.admin_contacts.is_empty());
+        assert!(settings.donation_links.is_empty());
+        assert!(settings.download_links.is_empty());
     }
 
     #[test]

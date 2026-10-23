@@ -113,6 +113,21 @@ pub struct ConfigDiscoveryAltcha {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlatformNameConfig {
+    pub en: String,
+    pub fa: String,
+}
+
+impl Default for PlatformNameConfig {
+    fn default() -> Self {
+        Self {
+            en: "MailiaM".to_string(),
+            fa: "میلیم".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigDiscoveryResponse {
     pub domain: String,
     pub registration_open: bool,
@@ -126,6 +141,18 @@ pub struct ConfigDiscoveryResponse {
     pub instant_prefix: String,
     pub custom_prefix_enabled: bool,
     pub custom_prefix: String,
+    #[serde(default)]
+    pub platform_name: PlatformNameConfig,
+    #[serde(default)]
+    pub platform_icon: String,
+    #[serde(default)]
+    pub platform_image_url: String,
+    #[serde(default)]
+    pub admin_contacts: Vec<crate::config::LinkItem>,
+    #[serde(default)]
+    pub donation_links: Vec<crate::config::LinkItem>,
+    #[serde(default)]
+    pub download_links: Vec<crate::config::DownloadLinkItem>,
 }
 
 #[cfg(test)]

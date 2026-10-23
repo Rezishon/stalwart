@@ -47758,9 +47758,167 @@ pub const DEFAULT_USERNAME_BLACKLIST: &[&str] = &[
     "*helpdesk*",
 ];
 
+impl Default for DeltaChatLink {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            title: String::new(),
+            title_fa: String::new(),
+            link: String::new(),
+            icon: String::new(),
+            image_url: String::new(),
+        }
+    }
+}
+
+impl Pickle for DeltaChatLink {
+    fn pickle(&self, out: &mut Vec<u8>) {
+        self.id.pickle(out);
+        self.title.pickle(out);
+        self.title_fa.pickle(out);
+        self.link.pickle(out);
+        self.icon.pickle(out);
+        self.image_url.pickle(out);
+    }
+
+    fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
+        let mut this = Self::default();
+        this.id = Pickle::unpickle(stream)?;
+        this.title = Pickle::unpickle(stream)?;
+        this.title_fa = Pickle::unpickle(stream)?;
+        this.link = Pickle::unpickle(stream)?;
+        this.icon = Pickle::unpickle(stream)?;
+        this.image_url = Pickle::unpickle(stream)?;
+        Some(this)
+    }
+}
+
+impl IntoValue for DeltaChatLink {
+    fn into_value(self) -> JmapValue<'static> {
+        let mut map = jmap_tools::Map::with_capacity(6);
+        map.insert_unchecked(Property::Id, self.id.into_value());
+        map.insert_unchecked(Property::Title, self.title.into_value());
+        map.insert_unchecked(Property::TitleFa, self.title_fa.into_value());
+        map.insert_unchecked(Property::Link, self.link.into_value());
+        map.insert_unchecked(Property::Icon, self.icon.into_value());
+        map.insert_unchecked(Property::ImageUrl, self.image_url.into_value());
+        JmapValue::Object(map)
+    }
+}
+
+impl RegistryJsonPropertyPatch for DeltaChatLink {
+    fn patch_property<'x>(
+        &mut self,
+        mut pointer: JsonPointerPatch<'_>,
+        value: JmapValue<'x>,
+    ) -> PatchResult<'x> {
+        match pointer.next_property() {
+            Some(Property::Id) => self.id.patch(pointer, value),
+            Some(Property::Title) => self.title.patch(pointer, value),
+            Some(Property::TitleFa) => patch_empty_ok(&mut self.title_fa, pointer, value),
+            Some(Property::Link) => patch_empty_ok(&mut self.link, pointer, value),
+            Some(Property::Icon) => patch_empty_ok(&mut self.icon, pointer, value),
+            Some(Property::ImageUrl) => patch_empty_ok(&mut self.image_url, pointer, value),
+            _ => Err(PatchError::new(pointer, "Invalid property")),
+        }
+    }
+}
+
+impl Default for DeltaChatDownloadLink {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            title: String::new(),
+            title_fa: String::new(),
+            link: String::new(),
+            is_direct: false,
+            icon: String::new(),
+            image_url: String::new(),
+        }
+    }
+}
+
+impl Pickle for DeltaChatDownloadLink {
+    fn pickle(&self, out: &mut Vec<u8>) {
+        self.id.pickle(out);
+        self.title.pickle(out);
+        self.title_fa.pickle(out);
+        self.link.pickle(out);
+        self.is_direct.pickle(out);
+        self.icon.pickle(out);
+        self.image_url.pickle(out);
+    }
+
+    fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
+        let mut this = Self::default();
+        this.id = Pickle::unpickle(stream)?;
+        this.title = Pickle::unpickle(stream)?;
+        this.title_fa = Pickle::unpickle(stream)?;
+        this.link = Pickle::unpickle(stream)?;
+        this.is_direct = Pickle::unpickle(stream)?;
+        this.icon = Pickle::unpickle(stream)?;
+        this.image_url = Pickle::unpickle(stream)?;
+        Some(this)
+    }
+}
+
+impl IntoValue for DeltaChatDownloadLink {
+    fn into_value(self) -> JmapValue<'static> {
+        let mut map = jmap_tools::Map::with_capacity(7);
+        map.insert_unchecked(Property::Id, self.id.into_value());
+        map.insert_unchecked(Property::Title, self.title.into_value());
+        map.insert_unchecked(Property::TitleFa, self.title_fa.into_value());
+        map.insert_unchecked(Property::Link, self.link.into_value());
+        map.insert_unchecked(Property::IsDirect, self.is_direct.into_value());
+        map.insert_unchecked(Property::Icon, self.icon.into_value());
+        map.insert_unchecked(Property::ImageUrl, self.image_url.into_value());
+        JmapValue::Object(map)
+    }
+}
+
+impl RegistryJsonPropertyPatch for DeltaChatDownloadLink {
+    fn patch_property<'x>(
+        &mut self,
+        mut pointer: JsonPointerPatch<'_>,
+        value: JmapValue<'x>,
+    ) -> PatchResult<'x> {
+        match pointer.next_property() {
+            Some(Property::Id) => self.id.patch(pointer, value),
+            Some(Property::Title) => self.title.patch(pointer, value),
+            Some(Property::TitleFa) => patch_empty_ok(&mut self.title_fa, pointer, value),
+            Some(Property::Link) => patch_empty_ok(&mut self.link, pointer, value),
+            Some(Property::IsDirect) => self.is_direct.patch(pointer, value),
+            Some(Property::Icon) => patch_empty_ok(&mut self.icon, pointer, value),
+            Some(Property::ImageUrl) => patch_empty_ok(&mut self.image_url, pointer, value),
+            _ => Err(PatchError::new(pointer, "Invalid property")),
+        }
+    }
+}
+
+impl<T> std::ops::Index<usize> for List<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.0
+            .get(&(index as u32))
+            .or_else(|| self.0.inner.get(index).map(|kv| &kv.value))
+            .expect("index out of bounds")
+    }
+}
+
+impl<T> std::ops::IndexMut<usize> for List<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        if self.0.get(&(index as u32)).is_some() {
+            self.0.get_mut(&(index as u32)).unwrap()
+        } else {
+            &mut self.0.inner.get_mut(index).expect("index out of bounds").value
+        }
+    }
+}
+
 impl ObjectImpl for DeltaChat {
     const FLAGS: u64 = OBJ_SINGLETON;
-    const VERSION: u8 = 4;
+    const VERSION: u8 = 5;
     const OBJECT: ObjectType = ObjectType::DeltaChat;
 
     fn validate(&self, errors: &mut Vec<ValidationError>) -> bool {
@@ -47830,6 +47988,97 @@ impl ObjectImpl for DeltaChat {
                 &self.custom_prefix,
             ));
         }
+
+        let has_control_or_bidi = |s: &str| -> bool {
+            s.chars().any(|c| {
+                c.is_ascii_control()
+                    || ('\u{202A}'..='\u{202E}').contains(&c)
+                    || ('\u{2066}'..='\u{2069}').contains(&c)
+            })
+        };
+
+        let is_safe_link = |s: &str| -> bool {
+            if has_control_or_bidi(s) || s.len() > 1024 {
+                return false;
+            }
+            let lower = s.trim().to_ascii_lowercase();
+            lower.is_empty()
+                || lower.starts_with("https://")
+                || lower.starts_with("http://")
+                || lower.starts_with("mailto:")
+                || lower.starts_with("tg:")
+                || lower.starts_with("matrix:")
+                || lower.starts_with("bitcoin:")
+                || lower.starts_with("monero:")
+                || (lower.starts_with('/') && !lower.starts_with("//") && !lower.starts_with("/\\"))
+        };
+
+        let validate_text =
+            |s: &str, max_len: usize, prop: Property, errors: &mut Vec<ValidationError>| {
+                if s.len() > max_len {
+                    errors.push(ValidationError::max_length(prop, max_len));
+                }
+                if has_control_or_bidi(s) {
+                    errors.push(ValidationError::invalid(prop, s));
+                }
+            };
+
+        validate_text(&self.platform_name_en, 64, Property::PlatformNameEn, errors);
+        validate_text(&self.platform_name_fa, 64, Property::PlatformNameFa, errors);
+        validate_text(&self.platform_icon, 512, Property::PlatformIcon, errors);
+        validate_text(&self.platform_image_url, 512, Property::PlatformImageUrl, errors);
+
+        if self.admin_contacts.len() > 20 {
+            errors.push(ValidationError::max_items(Property::AdminContacts, 20));
+        }
+        for item in self.admin_contacts.iter() {
+            validate_text(&item.id, 64, Property::Id, errors);
+            validate_text(&item.title, 128, Property::Title, errors);
+            validate_text(&item.title_fa, 128, Property::TitleFa, errors);
+            validate_text(&item.icon, 128, Property::Icon, errors);
+            validate_text(&item.image_url, 1024, Property::ImageUrl, errors);
+            if item.link.len() > 1024 {
+                errors.push(ValidationError::max_length(Property::Link, 1024));
+            }
+            if !is_safe_link(&item.link) {
+                errors.push(ValidationError::invalid(Property::Link, &item.link));
+            }
+        }
+
+        if self.donation_links.len() > 20 {
+            errors.push(ValidationError::max_items(Property::DonationLinks, 20));
+        }
+        for item in self.donation_links.iter() {
+            validate_text(&item.id, 64, Property::Id, errors);
+            validate_text(&item.title, 128, Property::Title, errors);
+            validate_text(&item.title_fa, 128, Property::TitleFa, errors);
+            validate_text(&item.icon, 128, Property::Icon, errors);
+            validate_text(&item.image_url, 1024, Property::ImageUrl, errors);
+            if item.link.len() > 1024 {
+                errors.push(ValidationError::max_length(Property::Link, 1024));
+            }
+            if !is_safe_link(&item.link) {
+                errors.push(ValidationError::invalid(Property::Link, &item.link));
+            }
+        }
+
+        if self.download_links.len() > 20 {
+            errors.push(ValidationError::max_items(Property::DownloadLinks, 20));
+        }
+        for item in self.download_links.iter() {
+            validate_text(&item.id, 64, Property::Id, errors);
+            validate_text(&item.title, 128, Property::Title, errors);
+            validate_text(&item.title_fa, 128, Property::TitleFa, errors);
+            validate_text(&item.icon, 128, Property::Icon, errors);
+            validate_text(&item.image_url, 1024, Property::ImageUrl, errors);
+            if item.link.len() > 1024 {
+                errors.push(ValidationError::max_length(Property::Link, 1024));
+            }
+            if !is_safe_link(&item.link) {
+                errors.push(ValidationError::invalid(Property::Link, &item.link));
+            }
+        }
+
         errors.len() == neb
     }
 
@@ -47867,12 +48116,19 @@ impl Pickle for DeltaChat {
         self.custom_prefix_enabled.pickle(out);
         self.custom_prefix.pickle(out);
         self.username_blacklist.pickle(out);
+        self.platform_name_en.pickle(out);
+        self.platform_name_fa.pickle(out);
+        self.platform_icon.pickle(out);
+        self.platform_image_url.pickle(out);
+        self.admin_contacts.pickle(out);
+        self.donation_links.pickle(out);
+        self.download_links.pickle(out);
     }
 
     fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
         let mut this = Self::default();
         this.enabled = Pickle::unpickle(stream)?;
-        // ponytail: v0 enabled-only; v1 free-text domain/imap (discarded); v2 domain ids; v3 endpoints; v4 prefixes & blacklist
+        // ponytail: v0 enabled-only; v1 free-text domain/imap (discarded); v2 domain ids; v3 endpoints; v4 prefixes & blacklist; v5 relay page
         if stream.version() >= 1 {
             this.registration_open = Pickle::unpickle(stream)?;
             this.instant_accounts_enabled = Pickle::unpickle(stream)?;
@@ -47910,6 +48166,15 @@ impl Pickle for DeltaChat {
                 this.custom_prefix = Pickle::unpickle(stream)?;
                 this.username_blacklist = Pickle::unpickle(stream)?;
             }
+            if stream.version() >= 5 {
+                this.platform_name_en = Pickle::unpickle(stream)?;
+                this.platform_name_fa = Pickle::unpickle(stream)?;
+                this.platform_icon = Pickle::unpickle(stream)?;
+                this.platform_image_url = Pickle::unpickle(stream)?;
+                this.admin_contacts = Pickle::unpickle(stream)?;
+                this.donation_links = Pickle::unpickle(stream)?;
+                this.download_links = Pickle::unpickle(stream)?;
+            }
         }
         Some(this)
     }
@@ -47945,13 +48210,75 @@ impl Default for DeltaChat {
                     .map(|&s| s.to_string())
                     .collect(),
             ),
+            platform_name_en: "MailiaM".into(),
+            platform_name_fa: "میلیم".into(),
+            platform_icon: String::new(),
+            platform_image_url: String::new(),
+            admin_contacts: List::default(),
+            donation_links: List::default(),
+            download_links: List::from(vec![
+                DeltaChatDownloadLink {
+                    id: "google_play".into(),
+                    title: "Google Play".into(),
+                    title_fa: "گوگل پلی".into(),
+                    link: "https://play.google.com/store/apps/details?id=chat.delta".into(),
+                    is_direct: false,
+                    icon: "google-play".into(),
+                    image_url: String::new(),
+                },
+                DeltaChatDownloadLink {
+                    id: "f_droid".into(),
+                    title: "F-Droid".into(),
+                    title_fa: "اف‌دروید".into(),
+                    link: "https://f-droid.org/packages/chat.delta/".into(),
+                    is_direct: false,
+                    icon: "f-droid".into(),
+                    image_url: String::new(),
+                },
+                DeltaChatDownloadLink {
+                    id: "android_apk".into(),
+                    title: "Android APK".into(),
+                    title_fa: "دانلود فایل APK (رسمی)".into(),
+                    link: "https://download.delta.chat/android/".into(),
+                    is_direct: false,
+                    icon: "android".into(),
+                    image_url: String::new(),
+                },
+                DeltaChatDownloadLink {
+                    id: "apple_store".into(),
+                    title: "iOS App Store".into(),
+                    title_fa: "اپ استور اپل".into(),
+                    link: "https://apps.apple.com/app/delta-chat/id1459523234".into(),
+                    is_direct: false,
+                    icon: "apple".into(),
+                    image_url: String::new(),
+                },
+                DeltaChatDownloadLink {
+                    id: "desktop".into(),
+                    title: "Desktop".into(),
+                    title_fa: "نسخه دسکتاپ (ویندوز / مک / لینوکس)".into(),
+                    link: "https://delta.chat/en/download".into(),
+                    is_direct: false,
+                    icon: "desktop".into(),
+                    image_url: String::new(),
+                },
+                DeltaChatDownloadLink {
+                    id: "direct_server".into(),
+                    title: "Direct Server Download".into(),
+                    title_fa: "دانلود مستقیم سرور".into(),
+                    link: String::new(),
+                    is_direct: true,
+                    icon: "download".into(),
+                    image_url: String::new(),
+                },
+            ]),
         }
     }
 }
 
 impl IntoValue for DeltaChat {
     fn into_value(self) -> JmapValue<'static> {
-        let mut map = jmap_tools::Map::with_capacity(22);
+        let mut map = jmap_tools::Map::with_capacity(29);
         map.insert_unchecked(Property::Enabled, self.enabled.into_value());
         map.insert_unchecked(Property::RegistrationOpen, self.registration_open.into_value());
         map.insert_unchecked(
@@ -47989,6 +48316,22 @@ impl IntoValue for DeltaChat {
             Property::UsernameBlacklist,
             self.username_blacklist.into_value(),
         );
+        map.insert_unchecked(
+            Property::PlatformNameEn,
+            self.platform_name_en.into_value(),
+        );
+        map.insert_unchecked(
+            Property::PlatformNameFa,
+            self.platform_name_fa.into_value(),
+        );
+        map.insert_unchecked(Property::PlatformIcon, self.platform_icon.into_value());
+        map.insert_unchecked(
+            Property::PlatformImageUrl,
+            self.platform_image_url.into_value(),
+        );
+        map.insert_unchecked(Property::AdminContacts, self.admin_contacts.into_value());
+        map.insert_unchecked(Property::DonationLinks, self.donation_links.into_value());
+        map.insert_unchecked(Property::DownloadLinks, self.download_links.into_value());
         JmapValue::Object(map)
     }
 }
@@ -48034,6 +48377,21 @@ impl RegistryJsonPropertyPatch for DeltaChat {
                 patch_empty_ok(&mut self.custom_prefix, pointer, value)
             }
             Some(Property::UsernameBlacklist) => self.username_blacklist.patch(pointer, value),
+            Some(Property::PlatformNameEn) => {
+                patch_empty_ok(&mut self.platform_name_en, pointer, value)
+            }
+            Some(Property::PlatformNameFa) => {
+                patch_empty_ok(&mut self.platform_name_fa, pointer, value)
+            }
+            Some(Property::PlatformIcon) => {
+                patch_empty_ok(&mut self.platform_icon, pointer, value)
+            }
+            Some(Property::PlatformImageUrl) => {
+                patch_empty_ok(&mut self.platform_image_url, pointer, value)
+            }
+            Some(Property::AdminContacts) => self.admin_contacts.patch(pointer, value),
+            Some(Property::DonationLinks) => self.donation_links.patch(pointer, value),
+            Some(Property::DownloadLinks) => self.download_links.patch(pointer, value),
             Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
                 property: Property::Type,
                 value,
@@ -48281,5 +48639,167 @@ mod deltachat_pickle_tests {
         let patch_res = dc.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Bool(true));
         assert!(patch_res.is_ok());
         assert!(dc.custom_prefix_enabled);
+    }
+
+    #[test]
+    fn unpickle_v4_leaves_v5_defaults() {
+        let mut bytes = vec![4u8];
+        true.pickle(&mut bytes);                           // enabled
+        true.pickle(&mut bytes);                           // registration_open
+        true.pickle(&mut bytes);                           // instant_accounts_enabled
+        true.pickle(&mut bytes);                           // custom_accounts_enabled
+        None::<String>.pickle(&mut bytes);                 // frontend_path
+        Id::from(7u32).pickle(&mut bytes);                 // domain_id
+        Map::<Id>::default().pickle(&mut bytes);           // allowed_domains
+        false.pickle(&mut bytes);                          // altcha_required
+        100_000u64.pickle(&mut bytes);                     // altcha_max_number
+        String::new().pickle(&mut bytes);                  // altcha_hmac_secret
+        "imap.example.org".to_string().pickle(&mut bytes); // imap_host
+        993u64.pickle(&mut bytes);                         // imap_port
+        "ssl".to_string().pickle(&mut bytes);              // imap_security
+        "smtp.example.org".to_string().pickle(&mut bytes); // smtp_host
+        465u64.pickle(&mut bytes);                         // smtp_port
+        "ssl".to_string().pickle(&mut bytes);              // smtp_security
+        "3".to_string().pickle(&mut bytes);                // certificate_checks
+        true.pickle(&mut bytes);                           // instant_prefix_enabled
+        "dc_".to_string().pickle(&mut bytes);              // instant_prefix
+        false.pickle(&mut bytes);                          // custom_prefix_enabled
+        "".to_string().pickle(&mut bytes);                 // custom_prefix
+        Map::<String>::default().pickle(&mut bytes);       // username_blacklist
+
+        let mut stream = PickledStream::new(&bytes).unwrap();
+        let obj = DeltaChat::unpickle(&mut stream).expect("v4 blob unpickles into v5 struct");
+        assert_eq!(obj.platform_name_en, "MailiaM");
+        assert_eq!(obj.platform_name_fa, "میلیم");
+        assert_eq!(obj.download_links.len(), 6);
+        assert_eq!(obj.download_links[0].id, "google_play");
+        assert_eq!(obj.download_links[5].id, "direct_server");
+        assert!(obj.download_links[5].is_direct);
+    }
+
+    #[test]
+    fn test_deltachat_pickle_v4_to_v5_defaults() {
+        let dc_v5 = DeltaChat::default();
+        assert_eq!(dc_v5.platform_name_en, "MailiaM");
+        assert_eq!(dc_v5.platform_name_fa, "میلیم");
+        assert_eq!(dc_v5.platform_icon, "");
+        assert_eq!(dc_v5.platform_image_url, "");
+        assert!(dc_v5.admin_contacts.is_empty());
+        assert!(dc_v5.donation_links.is_empty());
+        assert_eq!(dc_v5.download_links.len(), 6);
+        assert_eq!(dc_v5.download_links[0].id, "google_play");
+        assert_eq!(dc_v5.download_links[5].id, "direct_server");
+        assert!(dc_v5.download_links[5].is_direct);
+
+        // Roundtrip test via to_pickled_vec
+        let pickled = dc_v5.to_pickled_vec();
+        let mut stream = crate::pickle::PickledStream::new(&pickled).expect("valid stream");
+        let unpickled = DeltaChat::unpickle(&mut stream).expect("unpickle v5");
+        assert_eq!(unpickled, dc_v5);
+    }
+
+    #[test]
+    fn test_deltachat_relay_link_security_validation() {
+        let mut dc = DeltaChat::default();
+        let mut errors = Vec::new();
+        assert!(dc.validate(&mut errors));
+
+        // Test XSS rejection
+        dc.admin_contacts.push(DeltaChatLink {
+            id: "xss".into(),
+            title: "Bad".into(),
+            title_fa: "".into(),
+            link: "javascript:alert(1)".into(),
+            icon: "".into(),
+            image_url: "".into(),
+        });
+        assert!(!dc.validate(&mut errors));
+        errors.clear();
+
+        // Test protocol-relative rejection (//)
+        dc.admin_contacts[0].link = "//attacker.com/evil.apk".into();
+        assert!(!dc.validate(&mut errors));
+        errors.clear();
+
+        // Test backslash relative rejection (/\\)
+        dc.admin_contacts[0].link = "/\\\\attacker.com/evil.apk".into();
+        assert!(!dc.validate(&mut errors));
+        errors.clear();
+
+        // Test rejection of ASCII control characters
+        dc.admin_contacts[0].link = "/downloads/good.apk\r\n".into();
+        assert!(!dc.validate(&mut errors));
+        errors.clear();
+
+        // Test rejection of Unicode Bidi overrides
+        dc.admin_contacts[0].title = "good\u{202E}txt.apk".into();
+        assert!(!dc.validate(&mut errors));
+        errors.clear();
+
+        // Test valid relative URL acceptance
+        dc.admin_contacts[0].title = "Support".into();
+        dc.admin_contacts[0].link = "/downloads/good.apk".into();
+        assert!(dc.validate(&mut errors));
+    }
+
+    #[test]
+    fn test_deltachat_relay_icons_and_images_optional_and_empty() {
+        use jmap_tools::JsonPointer;
+        let mut dc = DeltaChat::default();
+        dc.platform_icon = "old_icon".into();
+        dc.platform_image_url = "https://example.org/old_banner.png".into();
+
+        // Patch platformIcon and platformImageUrl with null and empty string
+        let ptr = JsonPointer::<Property>::parse("platformIcon");
+        assert!(dc.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Null).is_ok());
+        assert_eq!(dc.platform_icon, "");
+
+        let ptr = JsonPointer::<Property>::parse("platformImageUrl");
+        assert!(dc.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Str("".into())).is_ok());
+        assert_eq!(dc.platform_image_url, "");
+
+        // Patch DeltaChatLink icon and imageUrl with null / empty
+        let mut link = DeltaChatLink {
+            id: "contact_1".into(),
+            title: "Support".into(),
+            title_fa: "".into(),
+            link: "https://support.example.org".into(),
+            icon: "telegram".into(),
+            image_url: "https://example.org/img.png".into(),
+        };
+
+        let ptr = JsonPointer::<Property>::parse("icon");
+        assert!(link.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Null).is_ok());
+        assert_eq!(link.icon, "");
+
+        let ptr = JsonPointer::<Property>::parse("imageUrl");
+        assert!(link.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Str("".into())).is_ok());
+        assert_eq!(link.image_url, "");
+
+        // Patch DeltaChatDownloadLink icon and imageUrl with null / empty
+        let mut download = DeltaChatDownloadLink {
+            id: "dl_1".into(),
+            title: "Client".into(),
+            title_fa: "".into(),
+            link: "https://example.org/client.apk".into(),
+            is_direct: false,
+            icon: "android".into(),
+            image_url: "https://example.org/android.png".into(),
+        };
+
+        let ptr = JsonPointer::<Property>::parse("icon");
+        assert!(download.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Null).is_ok());
+        assert_eq!(download.icon, "");
+
+        let ptr = JsonPointer::<Property>::parse("imageUrl");
+        assert!(download.patch_property(JsonPointerPatch::new(&ptr), JmapValue::Null).is_ok());
+        assert_eq!(download.image_url, "");
+
+        // All empty icons and images validate successfully
+        dc.admin_contacts.push(link);
+        dc.download_links.push(download);
+        let mut errors = Vec::new();
+        assert!(dc.validate(&mut errors));
+        assert!(errors.is_empty());
     }
 }

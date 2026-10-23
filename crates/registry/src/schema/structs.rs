@@ -6323,6 +6323,42 @@ pub struct ZenohCoordinator {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct DeltaChatLink {
+    #[serde(rename = "id", deserialize_with = "deserialize_null_default")]
+    pub id: String,
+    #[serde(rename = "title", deserialize_with = "deserialize_null_default")]
+    pub title: String,
+    #[serde(rename = "titleFa", deserialize_with = "deserialize_null_default")]
+    pub title_fa: String,
+    #[serde(rename = "link", deserialize_with = "deserialize_null_default")]
+    pub link: String,
+    #[serde(rename = "icon", deserialize_with = "deserialize_null_default")]
+    pub icon: String,
+    #[serde(rename = "imageUrl", deserialize_with = "deserialize_null_default")]
+    pub image_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeltaChatDownloadLink {
+    #[serde(rename = "id", deserialize_with = "deserialize_null_default")]
+    pub id: String,
+    #[serde(rename = "title", deserialize_with = "deserialize_null_default")]
+    pub title: String,
+    #[serde(rename = "titleFa", deserialize_with = "deserialize_null_default")]
+    pub title_fa: String,
+    #[serde(rename = "link", deserialize_with = "deserialize_null_default")]
+    pub link: String,
+    #[serde(rename = "isDirect")]
+    pub is_direct: bool,
+    #[serde(rename = "icon", deserialize_with = "deserialize_null_default")]
+    pub icon: String,
+    #[serde(rename = "imageUrl", deserialize_with = "deserialize_null_default")]
+    pub image_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DeltaChat {
     #[serde(rename = "enabled")]
     pub enabled: bool,
@@ -6368,4 +6404,18 @@ pub struct DeltaChat {
     pub custom_prefix: String,
     #[serde(rename = "usernameBlacklist")]
     pub username_blacklist: Map<String>,
+    #[serde(rename = "platformNameEn", deserialize_with = "deserialize_null_default")]
+    pub platform_name_en: String,
+    #[serde(rename = "platformNameFa", deserialize_with = "deserialize_null_default")]
+    pub platform_name_fa: String,
+    #[serde(rename = "platformIcon", deserialize_with = "deserialize_null_default")]
+    pub platform_icon: String,
+    #[serde(rename = "platformImageUrl", deserialize_with = "deserialize_null_default")]
+    pub platform_image_url: String,
+    #[serde(rename = "adminContacts")]
+    pub admin_contacts: List<DeltaChatLink>,
+    #[serde(rename = "donationLinks")]
+    pub donation_links: List<DeltaChatLink>,
+    #[serde(rename = "downloadLinks")]
+    pub download_links: List<DeltaChatDownloadLink>,
 }

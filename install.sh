@@ -76,20 +76,69 @@ validate_hostname() {
     return 0
 }
 
-validate_email() {
-    [ -n "$1" ] || return 1
-    contains_cr_lf_or_quote "$1" && return 1
+strip_url_scheme() {
     case "$1" in
-        *@*.*) return 0 ;;
-        *) return 1 ;;
+        https://*) printf '%s\n' "${1#https://}" ;;
+        http://*)  printf '%s\n' "${1#http://}" ;;
+        *)         printf '%s\n' "$1" ;;
     esac
 }
 
-validate_public_url() {
-    case "$1" in
-        https://?*|http://?*) return 0 ;;
-        *) return 1 ;;
+normalize_public_url() { # var
+    eval "_npu_val=\"\$$1\""
+    while :; do
+        case "$_npu_val" in
+            */) _npu_val="${_npu_val%/}" ;;
+            *) break ;;
+        esac
+    done
+    case "$_npu_val" in
+        https://*|http://*) ;;
+        *)
+            if [ "$_tls" = false ] || [ "$_tls" = 0 ]; then
+                _npu_val="http://${_npu_val}"
+            else
+                _npu_val="https://${_npu_val}"
+            fi
+            ;;
     esac
+    eval "$1=\"\$_npu_val\""
+}
+
+validate_public_url() {
+    [ -n "$1" ] || return 1
+    contains_cr_lf_or_quote "$1" && return 1
+    case "$1" in
+        *[[:space:]]*) return 1 ;;
+    esac
+    _vpu_host="$1"
+    case "$_vpu_host" in
+        https://?*) _vpu_host="${_vpu_host#https://}" ;;
+        http://?*)  _vpu_host="${_vpu_host#http://}" ;;
+        *://*)      return 1 ;;
+    esac
+    while :; do
+        case "$_vpu_host" in
+            */) _vpu_host="${_vpu_host%/}" ;;
+            *) break ;;
+        esac
+    done
+    [ -n "$_vpu_host" ] || return 1
+    case "$_vpu_host" in
+        */*) return 1 ;;
+    esac
+    case "$_vpu_host" in
+        *:*)
+            _vpu_h="${_vpu_host%:*}"
+            _vpu_p="${_vpu_host##*:}"
+            validate_hostname "$_vpu_h" || return 1
+            validate_port "$_vpu_p" || return 1
+            ;;
+        *)
+            validate_hostname "$_vpu_host" || return 1
+            ;;
+    esac
+    return 0
 }
 
 validate_admin() {
@@ -536,7 +585,7 @@ prompt_mode() {
     say ""
     say_header "Select action:"
     say_opt 1 "$_pm_opt1" "Default - keeps config & mail data safe"
-    say_opt 2 "Reconfigure server settings" "Update domain, ports, TLS, or admin"
+    say_opt 2 "Reconfigure server settings" "Update web URL or admin"
     say_opt 3 "Fresh reinstall" "Clean install - resets configuration"
     say_opt 4 "Uninstall MailiaM" "Remove binary, service, and optional data"
     prompt_choice _install_mode 1 4 "Choice [1-4]"
@@ -642,8 +691,8 @@ prompt_ports() {
     printf '  - SMTP:         %-6s %s(Mail delivery)%s\n' "$_listen_smtp" "$CLR_HINT" "$CLR_RESET"
     printf '  - SMTPS:        %-6s %s(Client send, TLS)%s\n' "$_listen_submissions" "$CLR_HINT" "$CLR_RESET"
     printf '  - Submission:   %-6s %s(Client send, STARTTLS)%s\n' "$_listen_submission" "$CLR_HINT" "$CLR_RESET"
-    printf '  - IMAP:         %-6s %s(Mail access)%s\n' "$_listen_imap" "$CLR_HINT" "$CLR_RESET"
-    printf '  - POP3:         %-6s %s(Legacy access)%s\n' "$_listen_pop3" "$CLR_HINT" "$CLR_RESET"
+    printf '  - IMAP:         %-6s %s(Mail access, TLS)%s\n' "$_listen_imap" "$CLR_HINT" "$CLR_RESET"
+    printf '  - POP3:         %-6s %s(Legacy access, TLS)%s\n' "$_listen_pop3" "$CLR_HINT" "$CLR_RESET"
     printf '  - ManageSieve:  %-6s %s(Mail filtering)%s\n' "$_listen_sieve" "$CLR_HINT" "$CLR_RESET"
     printf '  - HTTP:         %-6s %s(Web / ACME challenges)%s\n' "$_listen_http" "$CLR_HINT" "$CLR_RESET"
     printf '  - HTTPS:        %-6s %s(Relay SPA / WebUI / JMAP)%s\n' "$_listen_https" "$CLR_HINT" "$CLR_RESET"
@@ -673,43 +722,13 @@ prompt_ports() {
     fi
 }
 
-prompt_tls() {
-    clear_step
-    say_header "TLS / SSL encryption:"
-    say_opt 1 "Automatic Let's Encrypt (ACME)" "Default"
-    say_opt 2 "Custom certificate files" "Path to .crt and .key"
-    say_opt 3 "Disabled / Plaintext" "Only if behind reverse proxy"
-    prompt_choice _tls_choice 1 3 "Choice [1-3]"
-    case "$_tls_choice" in
-        1)
-            _tls=true
-            _tls_mode="Automatic Let's Encrypt (ACME)"
-            clear_step
-            prompt_value _acme_email "admin@${_hostname}" validate_email \
-                "Invalid email." "ACME contact email"
-            ;;
-        2)
-            _tls=true
-            _tls_mode="Custom certificate files"
-            clear_step
-            prompt_value _tls_cert /etc/ssl/certs/fullchain.pem validate_prefix \
-                "Invalid path." "TLS certificate path"
-            clear_step
-            prompt_value _tls_key /etc/ssl/private/privkey.pem validate_prefix \
-                "Invalid path." "TLS private key path"
-            ;;
-        3)
-            _tls=false
-            _tls_mode="Disabled / Plaintext"
-            ;;
-    esac
-}
-
 prompt_public_url_step() {
     set_public_url_default
+    _url_def="$(strip_url_scheme "$_public_url")"
     clear_step
-    prompt_value _public_url "$_public_url" validate_public_url "Invalid public URL." \
-        "Public web URL (/admin, /account, DeltaChat)"
+    prompt_value _public_url "$_url_def" validate_public_url "Invalid domain or URL." \
+        "Public web domain (/admin, /account, DeltaChat)"
+    normalize_public_url _public_url
 }
 
 print_box_title() {
@@ -742,8 +761,6 @@ print_install_summary() {
     printf '    - ManageSieve:   Port %s\n' "$_listen_sieve"
     printf '    - Web (HTTP):    Port %s\n' "$_listen_http"
     printf '    - Web (HTTPS):   Port %s\n' "$_listen_https"
-    say ""
-    printf '  %sTLS / SSL:%s         %s\n' "$CLR_BOLD" "$CLR_RESET" "${_tls_mode:-$_tls}"
     say ""
     if [ "$_admin" = random ] || [ -z "${_admin:-}" ]; then
         printf '  %sAdmin Account:%s     admin (password generated next)\n' \
@@ -1056,6 +1073,7 @@ seed_mode2_from_env() {
         _v="$(read_env_key_mail "$_env_file" MAILIAM_PUBLIC_URL STALWART_PUBLIC_URL)" || _v=
         if [ -n "$_v" ] && validate_public_url "$_v"; then
             _public_url="$_v"
+            normalize_public_url _public_url
         else
             _public_url=
             _v="$(read_env_key_mail "$_env_file" MAILIAM_LISTEN_HTTPS STALWART_LISTEN_HTTPS)" || _v=
@@ -1283,11 +1301,24 @@ run_step() {
     _rs_tot="$2"
     _rs_desc="$3"
     shift 3
-    printf '  %s[%s/%s]%s %-50s' "$CLR_BLUE" "$_rs_idx" "$_rs_tot" "$CLR_RESET" "$_rs_desc"
+    _rs_prog=0
+    if [ "$1" = "step_install_binary" ] && [ -z "${_file:-}" ] && [ -t 2 ]; then
+        _rs_prog=1
+        printf '  %s[%s/%s]%s %s\n' "$CLR_BLUE" "$_rs_idx" "$_rs_tot" "$CLR_RESET" "$_rs_desc"
+    else
+        printf '  %s[%s/%s]%s %-50s' "$CLR_BLUE" "$_rs_idx" "$_rs_tot" "$CLR_RESET" "$_rs_desc"
+    fi
     log_step "Step [$_rs_idx/$_rs_tot]: $_rs_desc"
     _rs_out=$(mktemp)
-    if "$@" > "$_rs_out" 2>&1; then
-        printf ' %s[OK]%s\n' "$CLR_GREEN" "$CLR_RESET"
+    if [ "$_rs_prog" -eq 1 ]; then
+        "$@" > "$_rs_out"
+        _rs_rc=$?
+    else
+        "$@" > "$_rs_out" 2>&1
+        _rs_rc=$?
+    fi
+    if [ "$_rs_rc" -eq 0 ]; then
+        [ "$_rs_prog" -eq 0 ] && printf ' %s[OK]%s\n' "$CLR_GREEN" "$CLR_RESET"
         if [ -s "$_rs_out" ]; then
             while IFS= read -r _l; do
                 log_step "  output: $_l"
@@ -1297,8 +1328,8 @@ run_step() {
         rm -f "$_rs_out"
         return 0
     else
-        _rs_rc=$?
         _step_failures=$((_step_failures + 1))
+        [ "$_rs_prog" -eq 1 ] && printf '  '
         printf ' %s[FAILED]%s\n' "$CLR_RED" "$CLR_RESET"
         if [ -s "$_rs_out" ]; then
             while IFS= read -r _l; do
@@ -1526,16 +1557,12 @@ main() {
     _listen_smtp=25
     _listen_submission=587
     _listen_submissions=465
-    _listen_imap=143
-    _listen_pop3=110
+    _listen_imap=993
+    _listen_pop3=995
     _listen_sieve=4190
     _listen_https=443
     _listen_http=80
     _tls=true
-    _tls_mode="Automatic Let's Encrypt (ACME)"
-    _acme_email=
-    _tls_cert=
-    _tls_key=
     _dc_imap_host=""
     _dc_imap_port=""
     _dc_imap_security=""
@@ -1617,6 +1644,7 @@ main() {
                     err "Invalid public URL: $2"
                 fi
                 _public_url="$2"
+                normalize_public_url _public_url
                 shift
                 ;;
             --admin)
@@ -1853,7 +1881,6 @@ main() {
             prompt_value _account "$_account" validate_user "Invalid user." \
                 "MailiaM user account"
             prompt_ports
-            prompt_tls
             prompt_public_url_step
             prompt_admin
             if [ "$_no_start" -eq 0 ]; then
@@ -1872,6 +1899,7 @@ main() {
         fi
     else
         set_public_url_default
+        normalize_public_url _public_url
         if [ "$_no_start" -eq 1 ]; then
             _SKIP_START=1
         else
@@ -1951,8 +1979,8 @@ Options:
   --smtp-port <n>               MAILIAM_LISTEN_SMTP (default: 25)
   --submission-port <n>         MAILIAM_LISTEN_SUBMISSION (default: 587)
   --submissions-port <n>        MAILIAM_LISTEN_SUBMISSIONS (default: 465)
-  --imap-port <n>               MAILIAM_LISTEN_IMAP (default: 143)
-  --pop3-port <n>               MAILIAM_LISTEN_POP3 (default: 110)
+  --imap-port <n>               MAILIAM_LISTEN_IMAP (default: 993)
+  --pop3-port <n>               MAILIAM_LISTEN_POP3 (default: 995)
   --sieve-port <n>              MAILIAM_LISTEN_SIEVE (default: 4190)
   --https-port <n>              MAILIAM_LISTEN_HTTPS (default: 443)
   --http-port <n>               MAILIAM_LISTEN_HTTP (default: 80)
@@ -2091,8 +2119,8 @@ After=network-online.target
 [Service]
 Type=simple
 LimitNOFILE=65536
-KillMode=process
 KillSignal=SIGINT
+TimeoutStopSec=30
 Restart=on-failure
 RestartSec=5
 EnvironmentFile=-${_env}
@@ -2153,10 +2181,39 @@ export RUN_AS_GROUP=${_user}
 
 ulimit -n \$ULIMIT_NOFILE
 
+is_alive() {
+    [ -n "\$1" ] || return 1
+    if [ -d "/proc" ]; then
+        [ -d "/proc/\$1" ] || return 1
+        grep -q '^State:[[:space:]]*Z' "/proc/\$1/status" 2>/dev/null && return 1
+        return 0
+    fi
+    case "\$(ps -o stat= -p "\$1" 2>/dev/null || ps -o state= -p "\$1" 2>/dev/null)" in
+        Z*|"") return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+clean_pidfile() {
+    if [ -s "\$PIDFILE" ]; then
+        _p=
+        read _p < "\$PIDFILE" || true
+        if ! is_alive "\$_p"; then
+            rm -f "\$PIDFILE"
+        fi
+    fi
+}
+
 do_start()
 {
-    start-stop-daemon --start --quiet --pidfile \$PIDFILE --exec \$DAEMON --test > /dev/null \\
-        || return 1
+    clean_pidfile
+    if [ -s "\$PIDFILE" ]; then
+        read _p < "\$PIDFILE" || true
+        if is_alive "\$_p"; then
+            return 1
+        fi
+        rm -f "\$PIDFILE"
+    fi
     start-stop-daemon --start --quiet --pidfile \$PIDFILE --exec \$DAEMON \\
         --background --make-pidfile --output "\$LOG_FILE" \\
         -- \$DAEMON_ARGS \\
@@ -2165,13 +2222,32 @@ do_start()
 
 do_stop()
 {
-    start-stop-daemon --stop --quiet --retry=INT/30/KILL/5 --pidfile \$PIDFILE --name mailiam
-    RETVAL="\$?"
-    [ "\$RETVAL" = 2 ] && return 2
-    start-stop-daemon --stop --quiet --oknodo --retry=0/30/KILL/5 --exec \$DAEMON
-    [ "\$?" = 2 ] && return 2
-    rm -f \$PIDFILE
-    return "\$RETVAL"
+    clean_pidfile
+    [ -s "\$PIDFILE" ] || return 0
+    read _p < "\$PIDFILE" || true
+    [ -n "\$_p" ] || { rm -f "\$PIDFILE"; return 0; }
+
+    # Send SIGINT for graceful shutdown
+    kill -INT "\$_p" 2>/dev/null || true
+
+    _waited=0
+    while [ "\$_waited" -lt 30 ]; do
+        if ! is_alive "\$_p"; then
+            rm -f "\$PIDFILE"
+            return 0
+        fi
+        sleep 1
+        _waited=\$((_waited + 1))
+    done
+
+    # Force kill if still running after 30s
+    kill -KILL "\$_p" 2>/dev/null || true
+    sleep 1
+    rm -f "\$PIDFILE"
+    if ! is_alive "\$_p"; then
+        return 0
+    fi
+    return 2
 }
 
 case "\$1" in
@@ -2180,25 +2256,26 @@ case "\$1" in
     do_start
     case "\$?" in
         0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
-        2)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
+        *)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
     esac
     ;;
   stop)
     [ "\$VERBOSE" != no ] && log_daemon_msg "Stopping MailiaM Server" "mailiam"
     do_stop
     case "\$?" in
-        0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
-        2)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
+        0)   [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
+        *)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
     esac
     ;;
   status)
+    clean_pidfile
     status_of_proc "\$DAEMON" "mailiam" && exit 0 || exit \$?
     ;;
   restart)
     log_daemon_msg "Restarting MailiaM Server" "mailiam"
     do_stop
     case "\$?" in
-      0|1)
+      0)
         do_start
         case "\$?" in
             0) log_end_msg 0 ;;
@@ -2243,7 +2320,25 @@ depend() {
     need net
 }
 
+_clean_stale_pid() {
+    if [ -s "\$pidfile" ]; then
+        read -r _pid < "\$pidfile" || true
+        if [ -n "\$_pid" ]; then
+            if [ -d "/proc" ]; then
+                if [ ! -d "/proc/\$_pid" ] || grep -q '^State:[[:space:]]*Z' "/proc/\$_pid/status" 2>/dev/null; then
+                    rm -f "\$pidfile"
+                fi
+            else
+                case "\$(ps -o stat= -p "\$_pid" 2>/dev/null || ps -o state= -p "\$_pid" 2>/dev/null)" in
+                    Z*|"") rm -f "\$pidfile" ;;
+                esac
+            fi
+        fi
+    fi
+}
+
 start_pre() {
+    _clean_stale_pid
     if [ -r "${_env}" ]; then
         set -a
         . "${_env}"
@@ -2252,6 +2347,10 @@ start_pre() {
     export RUN_AS_USER=${_user}
     export RUN_AS_GROUP=${_user}
     ulimit -n 65536
+}
+
+stop_pre() {
+    _clean_stale_pid
 }
 EOF
     chmod +x /etc/init.d/mailiam
@@ -2293,6 +2392,7 @@ command="/usr/sbin/daemon"
 command_args="-f -o \${mailiam_logfile} -p \${pidfile} ${_bin} --config=\${mailiam_config}"
 sig_stop="INT"
 start_precmd="mailiam_precmd"
+restart_cmd="mailiam_restart"
 
 mailiam_precmd()
 {
@@ -2308,6 +2408,22 @@ mailiam_precmd()
     export RUN_AS_GROUP="\${mailiam_runas_group}"
 
     ulimit -n "\${mailiam_fdlimit}"
+
+    # Clean up stale/zombie pidfile
+    if [ -s "\${pidfile}" ]; then
+        read _pid < "\${pidfile}" || true
+        if [ -n "\${_pid}" ]; then
+            case "\$(ps -o state= -p "\${_pid}" 2>/dev/null || ps -o stat= -p "\${_pid}" 2>/dev/null)" in
+                Z*|"") rm -f "\${pidfile}" ;;
+            esac
+        fi
+    fi
+}
+
+mailiam_restart()
+{
+    run_rc_command stop || true
+    run_rc_command start
 }
 
 run_rc_command "\$1"
@@ -2685,7 +2801,11 @@ downloader() {
         return $_status
     elif [ "$_dld" = wget ]; then
         if [ -t 2 ]; then
-            _wget_ui=
+            if check_help_for "$3" wget --show-progress; then
+                _wget_ui='-q --show-progress'
+            else
+                _wget_ui=
+            fi
         else
             _wget_ui='-q'
         fi

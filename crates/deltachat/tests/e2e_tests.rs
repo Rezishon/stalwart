@@ -281,8 +281,8 @@ fn test_e2e_web_spa_static_asset_serving() {
     assert_eq!(root.cache_control, "no-cache");
     assert!(!root.bytes.is_empty());
 
-    // 2. dispatch_web_asset("/assets/main-D6MKEcMq.js") -> returns JavaScript with immutable cache headers
-    let js = dispatch_web_asset("/assets/main-D6MKEcMq.js")
+    // 2. dispatch_web_asset("/assets/main-BhZJYHOT.js") -> returns JavaScript with immutable cache headers
+    let js = dispatch_web_asset("/assets/main-BhZJYHOT.js")
         .expect("bundled javascript asset must exist");
     assert_eq!(js.content_type, "application/javascript; charset=utf-8");
     assert_eq!(js.cache_control, "public, max-age=31536000, immutable");
