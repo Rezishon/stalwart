@@ -8,6 +8,12 @@ WEBUI_ZIP="$ROOT/resources/webui.zip"
 RELAY_DIR="$ROOT/crates/deltachat/assets"
 RELAY_REV_FILE="$RELAY_DIR/RELAY_REV"
 
+# Blackout default: if embedded assets exist on disk, never hit network unless ONLINE=1
+if [ -f "$WEBUI_ZIP" ] && [ -f "$RELAY_DIR/index.html" ] && [ "${ONLINE:-0}" != "1" ]; then
+    echo "fetch-assets: offline mode: local assets present (webui.zip + relay assets), skipping network"
+    exit 0
+fi
+
 webui_url=
 webui_sha256=
 relay_repo=
@@ -30,12 +36,21 @@ if [ -z "$webui_url" ] || [ -z "$webui_sha256" ] || [ -z "$relay_repo" ] || [ -z
 fi
 
 if [ "$relay_rev" = "HEAD" ] || [ "$relay_rev" = "latest" ]; then
-    resolved=$(git ls-remote "$relay_repo" HEAD | awk '{print $1}')
-    if [ -z "$resolved" ]; then
-        echo "fetch-assets: could not resolve $relay_repo HEAD" >&2
-        exit 1
+    resolved=""
+    if [ "${OFFLINE:-0}" != "1" ]; then
+        resolved=$(git ls-remote "$relay_repo" HEAD 2>/dev/null | awk '{print $1}') || true
     fi
-    echo "relay_rev $relay_rev -> $resolved"
+    if [ -z "$resolved" ]; then
+        if [ -f "$RELAY_DIR/index.html" ] && [ -f "$RELAY_REV_FILE" ]; then
+            resolved=$(tr -d '\r\n' < "$RELAY_REV_FILE")
+            echo "fetch-assets: offline/unreachable, reusing local relay assets ($resolved)"
+        else
+            echo "fetch-assets: could not resolve $relay_repo HEAD and no local assets found" >&2
+            exit 1
+        fi
+    else
+        echo "relay_rev $relay_rev -> $resolved"
+    fi
     relay_rev=$resolved
 fi
 

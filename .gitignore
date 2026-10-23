@@ -1,4 +1,7 @@
 /target
+/artifacts
+/dist
+/vendor
 *.failed
 *_failed
 run.sh
