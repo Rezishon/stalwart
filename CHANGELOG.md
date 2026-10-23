@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.25-rl1.0.59] - 2026-10-23
+
+RiseLabs fork. `--version` prints `0.16.25-rl1.0.59`. Cargo package version stays `0.16.25`.
+
+### Added
+- DeltaChat Relay Page Admin: WebUI sub-menu under `Settings -> DeltaChat -> Relay Page` (`x:DeltaChat/DeltaChatRelayPage`) with socket security guidance.
+- Relay Configuration & API: Persist custom bilingual branding (`en`, `fa`), admin contacts, donation links, and download links in registry (Pickle v5); expose on public `/api/v1/config`.
+- Relay URL Validation: Enforce scheme allowlist (`https:`, `http:`, `mailto:`, `tg:`, `matrix:`, `bitcoin:`, `monero:`, safe relative paths) and reject Unicode Bidi overrides on link entries.
+- Installer Progress: Native progress bar under download step header in `install.sh`.
+
+### Changed
+- Installer Domain Flow: Remove manual TLS prompt step; accept raw domains and normalize `MAILIAM_PUBLIC_URL` scheme automatically.
+- Relay SPA Assets: Refresh embedded frontend dist to rev `d51ba8c2` with relative asset paths.
+
+### Fixed
+- DeltaChat Account Creation: Eliminate negative cache (`emails_negative`) pollution from pre-checks; enforce atomic registry write and immediate cache invalidation.
+- Default Listeners: Restore default IMAPS (993) and POP3S (995) implicit TLS listeners when TLS is enabled to match DeltaChat client expectations.
+- Service Management: Clean up defunct/zombie processes and stale pidfiles across SysV, OpenRC, FreeBSD, and systemd service scripts.
+- Registry Schema: Permit nullable icons (`platformIcon`, `platformImageUrl`, `icon`, `imageUrl`) in `RegistryJsonPropertyPatch`.
+
 ## [0.16.25-rl1.0.38] - 2026-10-22
 
 RiseLabs fork. `--version` prints `0.16.25-rl1.0.38`. Cargo package version stays `0.16.25`.
